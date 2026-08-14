@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Document Generator</title>
+<link rel="stylesheet" href="style.css?v=20260813-4">
+</head>
+<body>
+
+  <div id="introOverlay">
+    <div class="intro-stage">
+      <div class="intro-floor"></div>
+      <div class="elevator-frame" id="elevator">
+        <div class="lift-indicator"><span class="lift-indicator-dot"></span></div>
+        <div class="lift-cab">
+          <div class="door door-left"></div>
+          <div class="door door-right"></div>
+          <span class="button-text">DOCUMENT GENERATOR</span>
+        </div>
+      </div>
+
+      <div class="man-container" id="man">
+        <div class="man-body">
+          <div class="hair-back"></div>
+          <div class="head">
+            <div class="ear"></div>
+            <div class="hair-top"></div>
+            <div class="eyebrow"></div>
+            <div class="eye"></div>
+            <div class="mouth"></div>
+          </div>
+          <div class="neck"></div>
+          <div class="shirt-collar"></div>
+          <div class="tie"></div>
+          <div class="jacket">
+            <div class="lapel left"></div>
+            <div class="lapel right"></div>
+            <div class="button"></div>
+            <div class="button second"></div>
+            <div class="pocket"></div>
+          </div>
+          <div class="belt"><div class="buckle"></div></div>
+          <div class="leg left"><div class="shin"><div class="shoe"></div></div></div>
+          <div class="leg right"><div class="shin"><div class="shoe"></div></div></div>
+          <div class="arm">
+            <div class="forearm">
+              <div class="briefcase">
+                <div class="handle"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <nav class="topnav">
+    <span class="brand">Document Generator</span>
+    <div class="nav-links">
+      <a href="#" class="nav-link active">Generator</a>
+      <a href="#" class="nav-link">History</a>
+      <a href="#" class="nav-link">Settings</a>
+    </div>
+  </nav>
+
+  <main class="stage">
+    <section class="hero">
+      <p class="eyebrow">MSA Automation</p>
+      <h1>Document<br>Generator</h1>
+      <p class="subtitle">Upload a W-9 and generate a Master Service Agreement in one click.</p>
+      <p class="status" id="status" role="status"></p>
+
+      <dl class="w9-summary" id="w9Summary" hidden>
+        <div>
+          <dt>Company / Business Name</dt>
+          <dd><input type="text" id="w9CompanyName" placeholder="—"></dd>
+        </div>
+        <div>
+          <dt>Tax ID</dt>
+          <dd class="w9-taxid-fields">
+            <input type="text" id="w9TaxId" placeholder="—">
+            <select id="w9TaxIdType">
+              <option value="SSN">SSN</option>
+              <option value="EIN">EIN</option>
+            </select>
+          </dd>
+        </div>
+        <div>
+          <dt>Address</dt>
+          <dd><input type="text" id="w9Address" placeholder="—"></dd>
+        </div>
+      </dl>
+      <p class="hint w9-edit-hint" id="w9EditHint" hidden>You can correct any of these before continuing.</p>
+
+      <details class="w9-debug" id="w9Debug" hidden>
+        <summary>Raw extracted text (debug)</summary>
+        <pre id="w9RawText"></pre>
+      </details>
+    </section>
+
+    <section class="action-panel">
+      <div class="wizard" id="wizard">
+        <div class="wizard-loading" id="wizardLoading" hidden>
+          <div class="loader-stage" aria-hidden="true">
+            <div class="loader-ground-shadow"></div>
+
+            <div class="loader-file-card">
+              <div class="loader-line accent"></div>
+              <div class="loader-line full"></div>
+              <div class="loader-line medium"></div>
+              <div class="loader-line full"></div>
+            </div>
+
+            <div class="loader-file-card">
+              <div class="loader-line accent"></div>
+              <div class="loader-line full"></div>
+              <div class="loader-line medium"></div>
+            </div>
+
+            <div class="loader-file-card">
+              <div class="loader-line accent"></div>
+              <div class="loader-line full"></div>
+              <div class="loader-line full"></div>
+            </div>
+
+            <div class="loader-file-card">
+              <div class="loader-line accent"></div>
+              <div class="loader-line medium"></div>
+              <div class="loader-line full"></div>
+            </div>
+          </div>
+          <p id="wizardLoadingText">Extracting data...</p>
+        </div>
+
+        <div class="wizard-step active" data-step="1">
+          <span class="step-label">Step 1</span>
+          <h2>Upload files</h2>
+          <div class="upload-block">
+            <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+            <label for="fileInput" class="btn">Upload W-9</label>
+            <p class="hint">Upload a W-9 PDF</p>
+            <ul class="file-list" id="fileList"></ul>
+          </div>
+          <button type="button" class="btn btn-nav step1-extract-btn" id="extractDataBtn" disabled>Extract Data</button>
+          <div class="wizard-nav">
+            <button type="button" class="btn btn-nav" id="step1NextBtn" disabled>Next</button>
+          </div>
+        </div>
+
+        <div class="wizard-step" data-step="2">
+          <span class="step-label">Step 2</span>
+          <h2>Upload MSA template</h2>
+          <div class="upload-block">
+            <input
+              type="file"
+              id="msaTemplateInput"
+              accept="application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              hidden
+            >
+            <label for="msaTemplateInput" class="btn">Upload MSA</label>
+            <p class="hint">Upload the MSA template (PDF or Word) to fill with the extracted data</p>
+            <ul class="file-list" id="msaFileList"></ul>
+          </div>
+          <button type="button" class="btn step1-extract-btn" id="generateBtn" disabled>
+            <span class="btn-label">Insert Data</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+          <div class="wizard-nav">
+            <button type="button" class="btn btn-secondary" id="step2BackBtn">Back</button>
+            <button type="button" class="btn btn-nav" id="step2NextBtn" disabled>Next</button>
+          </div>
+        </div>
+
+        <div class="wizard-step" data-step="3">
+          <span class="step-label">Step 3</span>
+          <h2>Manual details</h2>
+          <p class="hint">These aren't on the W-9, so enter them by hand.</p>
+          <div class="manual-fields">
+            <label>Contractor Representative(s)<input type="text" id="manualRep" placeholder="e.g. Jane Doe"></label>
+            <label>Role<input type="text" id="manualRole" placeholder="e.g. GIS Architect"></label>
+            <label>Location<input type="text" id="manualLocation" placeholder="e.g. Remote"></label>
+            <label>Start Date<input type="text" id="manualStartDate" placeholder="e.g. August 5th, 2026"></label>
+            <label>Billing Rate<input type="text" id="manualBillingRate" placeholder="e.g. $70/hr"></label>
+          </div>
+          <button type="button" class="btn step1-extract-btn" id="applyManualBtn">Apply Details</button>
+          <div class="wizard-nav">
+            <button type="button" class="btn btn-secondary" id="step3BackBtn">Back</button>
+            <button type="button" class="btn btn-nav" id="step3NextBtn" disabled>Next</button>
+          </div>
+        </div>
+
+        <div class="wizard-step" data-step="4">
+          <span class="step-label">Step 4</span>
+          <h2>Download</h2>
+          <div class="download-options">
+            <button type="button" class="btn btn-download" id="downloadPdfBtn" disabled>Download as PDF</button>
+            <button type="button" class="btn btn-download" id="downloadWordBtn" disabled>Download as Word (.docx)</button>
+          </div>
+          <div class="wizard-nav">
+            <button type="button" class="btn btn-secondary" id="step4BackBtn">Back</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script type="module" src="script.js?v=20260813-5"></script>
+</body>
+</html>
