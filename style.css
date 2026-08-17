@@ -758,12 +758,111 @@ body {
 .nav-link.active::after { width: 100%; }
 .nav-link.active { color: hsl(261deg 80% 48%); font-weight: 600; }
 
+/* ---------- History view (generated docs stored locally in IndexedDB) ---------- */
+.history-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 56px 72px;
+  overflow-y: auto;
+}
+
+.history-view[hidden] {
+  display: none;
+}
+
+.history-header .eyebrow { margin: 0 0 14px; }
+.history-header h1 {
+  margin: 0 0 10px;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  font-weight: 800;
+  letter-spacing: -1px;
+}
+.history-header .subtitle { margin: 0 0 36px; max-width: 520px; }
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 780px;
+}
+
+.history-empty {
+  color: #999;
+  font-size: 0.95rem;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 22px;
+  border: 1px solid #eee;
+  border-radius: 14px;
+}
+
+.history-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.history-item-name {
+  font-weight: 700;
+  font-size: 0.98rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-date {
+  font-size: 0.8rem;
+  color: #999;
+}
+
+.history-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.history-item-actions .btn {
+  padding: 8px 20px;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.history-delete-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #eee;
+  border-radius: 50%;
+  background: transparent;
+  color: #999;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.history-delete-btn:hover {
+  border-color: #d13c3c;
+  color: #d13c3c;
+}
+
 /* ---------- Full-screen stage ---------- */
 .stage {
   flex: 1;
   display: grid;
   grid-template-columns: 1.1fr 1fr;
   min-height: 0;
+}
+
+.stage[hidden] {
+  display: none;
 }
 
 .hero {
@@ -950,11 +1049,6 @@ body {
   padding: 48px 72px;
   overflow-y: auto;
   min-height: 0;
-}
-
-.divider {
-  height: 1px;
-  background: #000;
 }
 
 /* ---------- Wizard: one step's screen visible at a time ---------- */
@@ -1146,10 +1240,107 @@ body {
   color: #1a1a1a;
 }
 
+/* Start Date: a plain text input (so "August 5th, 2026 (Tentative)"-style
+   text still works) with a calendar-icon button that opens a native date
+   picker and formats the picked date back into that same text field. */
+.date-field {
+  position: relative;
+  display: flex;
+}
+
+.date-field input[type="text"] {
+  width: 100%;
+  padding-right: 40px;
+}
+
+.date-field-trigger {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.date-field-trigger:hover {
+  background: #f2f2f2;
+}
+
+/* The real date input is never shown — it only exists so its native
+   picker UI can be invoked and read from via JS. */
+.date-field-native {
+  position: absolute;
+  inset: 0;
+  right: 28px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .manual-fields input:focus {
   outline: none;
   border-color: hsl(261deg 80% 48%);
   box-shadow: 0 0 0 3px hsl(261deg 85% 92%);
+}
+
+/* Billing Rate: the "$" and "/hr" are fixed, non-editable text either side
+   of a number-only input — the user only ever types the number, and the
+   dollar sign / per-hour unit can't be mistyped or omitted. */
+.billing-rate-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.billing-rate-affix {
+  color: #666;
+  font-size: 0.95rem;
+  font-weight: 600;
+  flex-shrink: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.billing-rate-field input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  padding: 10px 0;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.billing-rate-field input[type="number"]::-webkit-outer-spin-button,
+.billing-rate-field input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.billing-rate-field input:focus {
+  border: none;
+  box-shadow: none;
+}
+
+.billing-rate-field:focus-within {
+  border-color: hsl(261deg 80% 48%);
+  box-shadow: 0 0 0 3px hsl(261deg 85% 92%);
+}
+
+.billing-rate-field:has(input.field-error) {
+  border-color: #d13c3c;
+  box-shadow: 0 0 0 3px rgba(209, 60, 60, 0.15);
 }
 
 .step1-extract-btn {

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Document Generator</title>
-<link rel="stylesheet" href="style.css?v=20260813-4">
+<link rel="stylesheet" href="style.css?v=20260813-8">
 </head>
 <body>
 
@@ -58,13 +58,21 @@
   <nav class="topnav">
     <span class="brand">Document Generator</span>
     <div class="nav-links">
-      <a href="#" class="nav-link active">Generator</a>
-      <a href="#" class="nav-link">History</a>
-      <a href="#" class="nav-link">Settings</a>
+      <a href="#" class="nav-link active" id="navGeneratorLink">Generator</a>
+      <a href="#" class="nav-link" id="navHistoryLink">History</a>
     </div>
   </nav>
 
-  <main class="stage">
+  <section class="history-view" id="historyView" hidden>
+    <div class="history-header">
+      <p class="eyebrow">Saved locally</p>
+      <h1>History</h1>
+      <p class="subtitle">Documents generated on this device — stored in this browser only.</p>
+    </div>
+    <div class="history-list" id="historyList"></div>
+  </section>
+
+  <main class="stage" id="mainStage">
     <section class="hero">
       <p class="eyebrow">MSA Automation</p>
       <h1>Document<br>Generator</h1>
@@ -180,8 +188,20 @@
             <label>Contractor Representative(s)<input type="text" id="manualRep" placeholder="e.g. Jane Doe"></label>
             <label>Role<input type="text" id="manualRole" placeholder="e.g. GIS Architect"></label>
             <label>Location<input type="text" id="manualLocation" placeholder="e.g. Remote"></label>
-            <label>Start Date<input type="text" id="manualStartDate" placeholder="e.g. August 5th, 2026"></label>
-            <label>Billing Rate<input type="text" id="manualBillingRate" placeholder="e.g. $70/hr"></label>
+            <label>Start Date
+              <span class="date-field">
+                <input type="text" id="manualStartDate" placeholder="e.g. August 5th, 2026">
+                <button type="button" class="date-field-trigger" id="manualStartDatePickerBtn" aria-label="Choose a date">📅</button>
+                <input type="date" id="manualStartDatePicker" class="date-field-native" tabindex="-1" aria-hidden="true">
+              </span>
+            </label>
+            <label>Billing Rate
+              <span class="billing-rate-field">
+                <span class="billing-rate-affix">$</span>
+                <input type="number" id="manualBillingRate" placeholder="70" min="0" step="0.01" inputmode="decimal">
+                <span class="billing-rate-affix">/hr</span>
+              </span>
+            </label>
           </div>
           <button type="button" class="btn step1-extract-btn" id="applyManualBtn">Apply Details</button>
           <div class="wizard-nav">
@@ -208,6 +228,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script type="module" src="script.js?v=20260813-5"></script>
+<script type="module" src="script.js?v=20260813-16"></script>
 </body>
 </html>

@@ -19,8 +19,34 @@ const manualRep = document.getElementById('manualRep');
 const manualRole = document.getElementById('manualRole');
 const manualLocation = document.getElementById('manualLocation');
 const manualStartDate = document.getElementById('manualStartDate');
+const manualStartDatePicker = document.getElementById('manualStartDatePicker');
+const manualStartDatePickerBtn = document.getElementById('manualStartDatePickerBtn');
 const manualBillingRate = document.getElementById('manualBillingRate');
 const applyManualBtn = document.getElementById('applyManualBtn');
+
+// Start Date stays a free-text field (so "August 5th, 2026 (Tentative)"
+// style values still work) — the calendar button just offers a native date
+// picker as a shortcut that formats its result back into that text field.
+manualStartDatePickerBtn.addEventListener('click', () => {
+  if (manualStartDatePicker.showPicker) {
+    manualStartDatePicker.showPicker();
+  } else {
+    manualStartDatePicker.focus();
+    manualStartDatePicker.click();
+  }
+});
+
+manualStartDatePicker.addEventListener('change', () => {
+  if (!manualStartDatePicker.value) return;
+  const [year, month, day] = manualStartDatePicker.value.split('-').map(Number);
+  const picked = new Date(year, month - 1, day);
+  manualStartDate.value = picked.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  manualStartDate.dispatchEvent(new Event('input', { bubbles: true }));
+});
 
 /* ---------- Wizard: one step's screen visible at a time ---------- */
 const wizard = document.getElementById('wizard');
@@ -92,7 +118,7 @@ async function waitRemaining(startedAt, minMs) {
 let uploadedFiles = [];
 let generatedPdfUrl = null;
 let generatedWordUrl = null;
-let generatedBaseName = 'Generated_MSA';
+let generatedBaseName = 'MSA';
 let extractedW9Data = null;
 let msaTemplateFile = null;
 let isDocxTemplate = false;
@@ -431,10 +457,12 @@ const NEXT_LABEL_PHRASES = [
   'Check the appropriate',
   'Exemptions',
   'Address (number',
-  'City state and ZIP code',
+  // 'City state and ZIP code' deliberately excluded — the combined address
+  // capture below is meant to span straight through that label (it sits
+  // between W-9 lines 5 and 6, both part of the same mailing address), not
+  // stop at it.
   'Social security number',
   'Employer identification number',
-  'Requester',
   'Part I',
   'Part II',
   'List account number',
@@ -467,8 +495,8 @@ function captureAfterLabel(text, labelRegex, stopRegex) {
     .filter(Boolean)
     .sort((a, b) => a.index - b.index);
 
-  const cutoff = stopCandidates.length ? stopCandidates[0].index : 60;
-  return cleanCapture(rest.slice(0, Math.min(cutoff, 60)));
+  const cutoff = stopCandidates.length ? stopCandidates[0].index : 160;
+  return cleanCapture(rest.slice(0, Math.min(cutoff, 160)));
 }
 
 // SSN/EIN are entered into individual boxed digit cells on the real form, so
@@ -534,39 +562,82 @@ function parseW9Fields(rawText, tinDigits) {
       loose('Business name/disregarded entity name')
     );
 
-  const streetAddress = captureAfterLabel(
+  // W-9 lines 5 ("Address") and 6 ("City, state, and ZIP code") are the two
+  // halves of one mailing address. Rather than capturing each line
+  // independently (which silently drops line 6 whenever its label doesn't
+  // OCR/extract cleanly), grab everything from after the line-5 label
+  // through to the SSN/EIN section in one pass — that span covers both
+  // lines' filled-in values regardless of whether the line-6 label survived
+  // in between — then strip that label out if it's present and split the
+  // combined block back into street/city/state+ZIP for the individual
+  // fields used elsewhere (debug view, MSA replacement building).
+  const addressBlock = captureAfterLabel(
     text,
     new RegExp(
       loosePattern('Address (number street and apt or suite no') + '\\.?\\)?\\.?(?:\\s*See\\s*instructions\\.?)?',
       'i'
     ),
-    new RegExp(LINE_NUM_PREFIX + loosePattern('City state and ZIP code'), 'i')
-  );
-
-  const cityStateZip = captureAfterLabel(
-    text,
-    loose('City state and ZIP code'),
     new RegExp(
       LINE_NUM_PREFIX + '(?:' + loosePattern('Social security number') + '|' + loosePattern('Employer identification number') + ')',
       'i'
     )
   );
 
+  // `text` had all whitespace (including the real line break between W-9
+  // lines 5 and 6) collapsed to single spaces at the top of this function,
+  // so once the "City, state, and ZIP code" label is stripped down to a
+  // plain space, nothing distinguishes "...Terrace" (end of line 5) from
+  // "Fremont..." (start of line 6) — a regex split on the fused text can't
+  // tell them apart and mis-splits (e.g. swallowing both into "city").
+  // Marking the exact label position *before* collapsing further, then
+  // splitting on that marker, keeps the one boundary that actually matters.
+  const ADDRESS_LINE_MARKER = '';
+  const withMarker = addressBlock
+    // The real form prints "Requester's name and address (optional)" as a
+    // second-column header immediately to the right of line 5's label, so
+    // it lands right at the start of the captured text (before the actual
+    // street value, which is on the next visual line) — strip it out too.
+    .replace(new RegExp('^\\s*Requester\'?s?\\s*name\\s*and\\s*address\\s*\\(optional\\)\\.?', 'i'), ' ')
+    .replace(new RegExp(LINE_NUM_PREFIX + loosePattern('City state and ZIP code') + '\\.?', 'i'), ADDRESS_LINE_MARKER);
+
+  const [rawStreetPart, rawCityPart = ''] = withMarker.split(ADDRESS_LINE_MARKER);
+  let streetAddress = cleanCapture(rawStreetPart.replace(/\s+/g, ' ').trim());
   let city = '';
   let stateZip = '';
-  if (cityStateZip.includes(',')) {
-    const [firstPart, ...rest] = cityStateZip.split(',');
-    city = firstPart.trim();
-    stateZip = rest.join(',').trim();
-  } else {
-    // OCR frequently drops the comma between city and state/ZIP — fall back
-    // to splitting on the trailing "ST ZIPCODE" pattern instead.
-    const spaceSplit = cityStateZip.match(/^(.*\S)\s+([A-Za-z]{2}\s*\d{5}(?:-\d{4})?)$/);
-    if (spaceSplit) {
-      city = spaceSplit[1].trim();
-      stateZip = spaceSplit[2].trim();
+
+  const cityPart = cleanCapture(rawCityPart.replace(/\s+/g, ' ').trim());
+  if (cityPart) {
+    // Line 6's own content is short and unambiguous once isolated, so a
+    // simple "<city>, <ST> <ZIP>" match (comma optional, since OCR often
+    // drops it) is reliable here in a way it wasn't across the whole block.
+    const cityStateZipMatch = cityPart.match(/^([A-Za-z][A-Za-z .'-]*?),?\s+([A-Za-z]{2}\s*\d{5}(?:-\d{4})?)\s*$/);
+    if (cityStateZipMatch) {
+      city = cityStateZipMatch[1].trim();
+      stateZip = cityStateZipMatch[2].trim();
     } else {
-      city = cityStateZip;
+      city = cityPart;
+    }
+  } else if (!withMarker.includes(ADDRESS_LINE_MARKER)) {
+    // Line 6's label never extracted at all, so there was no marker to split
+    // on — fall back to a best-effort match against the whole (ambiguous)
+    // block rather than losing whatever came after the street. Strip the
+    // state+ZIP suffix first, then prefer the LAST comma as the street/city
+    // boundary (far less ambiguous than guessing where a multi-word city
+    // name starts); only fall back to treating just the final word as the
+    // city when OCR dropped that comma too.
+    const stateZipSuffix = streetAddress.match(/([A-Za-z]{2}\s*\d{5}(?:-\d{4})?)\s*$/);
+    if (stateZipSuffix) {
+      stateZip = stateZipSuffix[1].trim();
+      const beforeStateZip = streetAddress.slice(0, stateZipSuffix.index).trim().replace(/,\s*$/, '');
+      const lastComma = beforeStateZip.lastIndexOf(',');
+      if (lastComma !== -1) {
+        streetAddress = beforeStateZip.slice(0, lastComma).trim();
+        city = beforeStateZip.slice(lastComma + 1).trim();
+      } else {
+        const words = beforeStateZip.split(' ');
+        city = words.pop() || '';
+        streetAddress = words.join(' ');
+      }
     }
   }
 
@@ -768,8 +839,20 @@ function replaceAfterLabelInParagraphs(paragraphs, label, value) {
     const idx = combined.indexOf(label);
     if (idx === -1) return;
 
-    const { startRun, startOffset } = findRunSpan(texts, idx + label.length, 0);
+    let { startRun, startOffset } = findRunSpan(texts, idx + label.length, 0);
     if (startRun === -1) return;
+
+    // Word often keeps a label's trailing space in the same (bold) run as
+    // the label itself — e.g. one run holding "Billing Rate: " — so the
+    // position right after the label can still land inside that run rather
+    // than the plain run the actual value lives in. Splicing the new value
+    // in there would make it inherit the label's bold formatting. Leave any
+    // such whitespace-only remainder where it is and advance into the next
+    // run(s) until landing on one that actually holds value content.
+    while (startRun + 1 < runs.length && /^\s*$/.test(texts[startRun].slice(startOffset))) {
+      startRun += 1;
+      startOffset = 0;
+    }
 
     runs[startRun].textContent = texts[startRun].slice(0, startOffset) + value;
     for (let i = startRun + 1; i < runs.length; i++) runs[i].textContent = '';
@@ -1093,6 +1176,10 @@ function setGeneratedFiles(pdfBlob, wordBlob, baseName) {
 
   downloadPdfBtn.disabled = false;
   downloadWordBtn.disabled = false;
+
+  saveToHistory(pdfBlob, wordBlob, baseName).catch((err) => {
+    console.error('Could not save generated document to history:', err);
+  });
 }
 
 // Shared between Step 2's preview count and Step 3's real, final edit — both
@@ -1210,7 +1297,11 @@ applyManualBtn.addEventListener('click', async () => {
       role: manualRole.value.trim(),
       location: manualLocation.value.trim(),
       startDate: manualStartDate.value.trim(),
-      billingRate: manualBillingRate.value.trim(),
+      // The field only ever collects the bare number — "$" and "/hr" are
+      // fixed UI decoration, not something the user can mistype — so they're
+      // added back on here to reconstruct the value actually inserted into
+      // the document (e.g. "70" -> "$70/hr").
+      billingRate: manualBillingRate.value.trim() ? `$${manualBillingRate.value.trim()}/hr` : '',
     };
 
     const allReplacements = [
@@ -1272,12 +1363,134 @@ function downloadUrl(url, filename) {
 
 downloadPdfBtn.addEventListener('click', () => {
   if (!generatedPdfUrl) return;
-  downloadUrl(generatedPdfUrl, `Generated_${generatedBaseName}.pdf`);
+  downloadUrl(generatedPdfUrl, `${generatedBaseName}.pdf`);
 });
 
 downloadWordBtn.addEventListener('click', () => {
   if (!generatedWordUrl) return;
-  downloadUrl(generatedWordUrl, `Generated_${generatedBaseName}.docx`);
+  downloadUrl(generatedWordUrl, `${generatedBaseName}.docx`);
+});
+
+/* ---------- History (generated documents, stored locally in this browser) ----------
+   IndexedDB rather than localStorage — it can hold the Blobs directly instead of
+   needing a base64 round-trip, and isn't capped at localStorage's ~5MB. */
+const HISTORY_DB_NAME = 'documentGeneratorHistory';
+const HISTORY_STORE = 'generatedDocuments';
+
+function openHistoryDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(HISTORY_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(HISTORY_STORE, { keyPath: 'id', autoIncrement: true });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveToHistory(pdfBlob, wordBlob, baseName) {
+  const db = await openHistoryDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE, 'readwrite');
+    tx.objectStore(HISTORY_STORE).add({ baseName, pdfBlob, wordBlob, createdAt: Date.now() });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getHistoryEntries() {
+  const db = await openHistoryDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(HISTORY_STORE, 'readonly').objectStore(HISTORY_STORE).getAll();
+    request.onsuccess = () => resolve(request.result.sort((a, b) => b.createdAt - a.createdAt));
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function deleteHistoryEntry(id) {
+  const db = await openHistoryDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE, 'readwrite');
+    tx.objectStore(HISTORY_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function formatHistoryDate(timestamp) {
+  return new Date(timestamp).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  downloadUrl(url, filename);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function renderHistory() {
+  const entries = await getHistoryEntries();
+  historyList.innerHTML = '';
+
+  if (!entries.length) {
+    historyList.innerHTML = '<p class="history-empty">No documents generated yet on this device.</p>';
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+    item.innerHTML = `
+      <div class="history-item-info">
+        <span class="history-item-name">${entry.baseName}</span>
+        <span class="history-item-date">${formatHistoryDate(entry.createdAt)}</span>
+      </div>
+      <div class="history-item-actions">
+        <button type="button" class="btn btn-secondary" data-action="pdf">PDF</button>
+        <button type="button" class="btn btn-secondary" data-action="word">Word</button>
+        <button type="button" class="history-delete-btn" data-action="delete" aria-label="Delete this document">✕</button>
+      </div>
+    `;
+    item.querySelector('[data-action="pdf"]').addEventListener('click', () => {
+      downloadBlob(entry.pdfBlob, `${entry.baseName}.pdf`);
+    });
+    item.querySelector('[data-action="word"]').addEventListener('click', () => {
+      downloadBlob(entry.wordBlob, `${entry.baseName}.docx`);
+    });
+    item.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+      await deleteHistoryEntry(entry.id);
+      renderHistory();
+    });
+    historyList.appendChild(item);
+  });
+}
+
+const mainStage = document.getElementById('mainStage');
+const historyView = document.getElementById('historyView');
+const historyList = document.getElementById('historyList');
+const navGeneratorLink = document.getElementById('navGeneratorLink');
+const navHistoryLink = document.getElementById('navHistoryLink');
+
+navHistoryLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  mainStage.hidden = true;
+  historyView.hidden = false;
+  navHistoryLink.classList.add('active');
+  navGeneratorLink.classList.remove('active');
+  renderHistory();
+});
+
+navGeneratorLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  historyView.hidden = true;
+  mainStage.hidden = false;
+  navGeneratorLink.classList.add('active');
+  navHistoryLink.classList.remove('active');
 });
 
 /* ---------- Intro animation: plays once, then hands off to the real page ---------- */
