@@ -1,0 +1,6 @@
+# Real per-deployment values (not secrets themselves, but .env files tend
+# to accumulate real secrets over a project's life — never commit the
+# pattern). .env.example stays tracked as the documented reference.
+.env
+
+node_modules/

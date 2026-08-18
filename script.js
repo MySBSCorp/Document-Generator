@@ -1,8 +1,23 @@
 // docx building/editing — no plain-<script> UMD build exists for these
 // (pizzip's npm package targets bundlers), so this file is loaded as a
-// module and imports jsDelivr's auto-bundled ESM builds directly.
-import PizZip from 'https://cdn.jsdelivr.net/npm/pizzip@3.2.0/+esm';
-import { Document, Packer, Paragraph, TextRun } from 'https://cdn.jsdelivr.net/npm/docx@8.5.0/+esm';
+// module. Vendored locally in vendor/ (originally jsDelivr's auto-bundled
+// ESM builds) rather than imported live from a CDN: dynamic `import`
+// statements have no browser-native Subresource Integrity mechanism, so a
+// compromised/MITM'd CDN response would otherwise run unverified code with
+// access to in-memory W-9 data (SSNs/EINs). Same-origin + CSP `script-src
+// 'self'` is what actually closes that gap — see vendor/README.md for the
+// exact source versions and how to update them.
+import PizZip from './vendor/pizzip-3.2.0.esm.js';
+import { Document, Packer, Paragraph, TextRun } from './vendor/docx-8.5.0.esm.js';
+
+// Clickjacking mitigation: a <meta> CSP can't set `frame-ancestors` (that's
+// header-only), and there's no server here to send X-Frame-Options — so this
+// is the one defense available for a static page. Bounces straight to the
+// top-level page if this document is ever loaded inside someone else's
+// iframe, instead of silently rendering the wizard for a UI-redress attack.
+if (window.top !== window.self) {
+  window.top.location = window.self.location.href;
+}
 
 const generateBtn = document.getElementById('generateBtn');
 const uploadZone = document.querySelector('.upload-block');
@@ -47,6 +62,23 @@ manualStartDatePicker.addEventListener('change', () => {
   });
   manualStartDate.dispatchEvent(new Event('input', { bubbles: true }));
 });
+
+// Keep the hidden native picker's calendar in sync with whatever the user
+// types into the free-text field, so reopening the calendar lands on the
+// typed date instead of whatever was last picked (or nothing at all).
+function syncStartDatePickerFromText() {
+  const text = manualStartDate.value.trim().replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
+  const parsed = text ? new Date(text) : NaN;
+  if (text && !Number.isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    manualStartDatePicker.value = `${year}-${month}-${day}`;
+  } else {
+    manualStartDatePicker.value = '';
+  }
+}
+manualStartDate.addEventListener('input', syncStartDatePickerFromText);
 
 /* ---------- Wizard: one step's screen visible at a time ---------- */
 const wizard = document.getElementById('wizard');
@@ -123,10 +155,43 @@ let extractedW9Data = null;
 let msaTemplateFile = null;
 let isDocxTemplate = false;
 
-if (window.pdfjsLib) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// pdf.js loads its worker script via `new Worker(url)`, which (unlike a <script>
+// tag) has no `integrity` attribute — so we fetch it ourselves, verify its hash
+// against the version we audited, and only then hand pdf.js a same-origin blob:
+// URL. This closes the one CDN load in the pipeline a <script integrity> tag
+// can't cover, so a compromised/MITM'd CDN response can't run inside the page
+// that's holding decoded W-9 data (SSNs/EINs).
+const PDF_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const PDF_WORKER_SHA512_B64 =
+  'BbrZ76UNZq5BhH7LL7pn9A4TKQpQeNCHOo65/akfelcIBbcVvYWOFQKPXIrykE3qZxYjmDX573oa4Ywsc7rpTw==';
+
+class IntegrityMismatchError extends Error {}
+
+async function fetchWithIntegrity(url, expectedSha512Base64) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Fetch failed (${res.status}) for ${url}`);
+  const buf = await res.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-512', buf);
+  const digestB64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  if (digestB64 !== expectedSha512Base64) {
+    throw new IntegrityMismatchError(`Integrity check failed for ${url} — refusing to run it`);
+  }
+  return URL.createObjectURL(new Blob([buf], { type: 'text/javascript' }));
 }
+
+// Tampering (hash mismatch) fails closed — we'd rather break PDF parsing than
+// run unverified code over documents containing SSNs/EINs. A plain network
+// failure (offline, CORS hiccup) instead falls back to the direct CDN URL so a
+// flaky connection doesn't brick the app outright.
+const pdfWorkerReady = window.pdfjsLib
+  ? fetchWithIntegrity(PDF_WORKER_URL, PDF_WORKER_SHA512_B64)
+      .then((blobUrl) => { pdfjsLib.GlobalWorkerOptions.workerSrc = blobUrl; })
+      .catch((err) => {
+        if (err instanceof IntegrityMismatchError) throw err;
+        console.error(err);
+        pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_WORKER_URL;
+      })
+  : Promise.resolve();
 
 // A running CSS animation (even finished, with fill-mode holding its end state)
 // always wins the cascade for the property it touches, regardless of selector
@@ -148,7 +213,12 @@ function renderFileList() {
   fileList.innerHTML = '';
   uploadedFiles.forEach((file) => {
     const li = document.createElement('li');
-    li.innerHTML = `<span>${file.name}</span><span class="size">${formatSize(file.size)}</span>`;
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = file.name;
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'size';
+    sizeSpan.textContent = formatSize(file.size);
+    li.append(nameSpan, sizeSpan);
     fileList.appendChild(li);
   });
 }
@@ -213,7 +283,12 @@ function setMsaTemplate(file) {
   msaTemplateFile = file;
   msaFileList.innerHTML = '';
   const li = document.createElement('li');
-  li.innerHTML = `<span>${file.name}</span><span class="size">${formatSize(file.size)}</span>`;
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = file.name;
+  const sizeSpan = document.createElement('span');
+  sizeSpan.className = 'size';
+  sizeSpan.textContent = formatSize(file.size);
+  li.append(nameSpan, sizeSpan);
   msaFileList.appendChild(li);
   setStatus(`${file.name} ready to fill.`);
   generateBtn.disabled = false;
@@ -370,6 +445,23 @@ function cropCanvasRegion(source, region, upscale) {
   return out;
 }
 
+// By default Tesseract.js fetches its own worker script, WASM core, and
+// English language data from cdn.jsdelivr.net at runtime — a supply-chain
+// dependency with no SRI (dynamic Worker/importScripts loads can't carry an
+// integrity attribute) that would otherwise run unverified code over the
+// decoded W-9 image. All three are vendored locally in vendor/tesseract/
+// instead (see vendor/README.md); corePath ends in .js, which tells
+// Tesseract.js to load that exact file rather than SIMD-detect and pick a
+// CDN variant — this pins the plain (non-SIMD) core for full compatibility
+// and a fully verifiable, closed dependency. Every Tesseract entry point
+// (createWorker, and the recognize() convenience wrapper) spawns its own
+// worker with its own options, so this has to be passed to each one.
+const TESSERACT_VENDORED_PATHS = {
+  workerPath: './vendor/tesseract/worker.min.js',
+  corePath: './vendor/tesseract/tesseract-core-simd-lstm.wasm.js',
+  langPath: './vendor/tesseract',
+};
+
 async function ocrDigitsOnly(cropCanvas) {
   if (!cropCanvas) return '';
 
@@ -379,7 +471,7 @@ async function ocrDigitsOnly(cropCanvas) {
   // instead, or it's silently dropped and the crop OCRs unconstrained.
   // tessedit_pageseg_mode 7 (SINGLE_LINE) suits a tight single row of boxed
   // digits far better than the default automatic paragraph/column detection.
-  const worker = await Tesseract.createWorker('eng');
+  const worker = await Tesseract.createWorker('eng', undefined, TESSERACT_VENDORED_PATHS);
   await worker.setParameters({
     tessedit_char_whitelist: '0123456789-',
     tessedit_pageseg_mode: '7',
@@ -419,6 +511,7 @@ async function ocrPdfText(file, onProgress) {
 
     const result = await Tesseract.recognize(canvas, 'eng', {
       logger: onProgress ? (m) => onProgress(i, pagesToScan, m) : undefined,
+      ...TESSERACT_VENDORED_PATHS,
     });
     combined += result.data.text + '\n';
 
@@ -691,6 +784,12 @@ async function processW9(file) {
 
   setStatus(`Reading ${file.name}...`);
   try {
+    try {
+      await pdfWorkerReady;
+    } catch (err) {
+      setStatus('Security check failed loading the PDF engine — please reload the page and try again.', true);
+      return;
+    }
     const text = await extractPdfText(file);
     if (text.replace(/\s+/g, '').length >= HAS_TEXT_THRESHOLD) {
       finishExtraction(text, false);
@@ -1373,9 +1472,28 @@ downloadWordBtn.addEventListener('click', () => {
 
 /* ---------- History (generated documents, stored locally in this browser) ----------
    IndexedDB rather than localStorage — it can hold the Blobs directly instead of
-   needing a base64 round-trip, and isn't capped at localStorage's ~5MB. */
+   needing a base64 round-trip, and isn't capped at localStorage's ~5MB.
+
+   History is scoped to this browser tab's lifetime: each tab gets its own random
+   session ID (kept in sessionStorage, so it survives a reload but never carries
+   over to a new tab — sessionStorage is exactly per-tab and dies with it). Every
+   saved entry is tagged with that ID, and only entries matching the current tab's
+   ID are ever read or shown, so a new tab starts with an empty-looking history
+   even though the underlying IndexedDB store is shared. Entries from other
+   (closed) tabs are opportunistically deleted the next time any tab reads
+   history, so old documents don't just sit there forever. */
 const HISTORY_DB_NAME = 'documentGeneratorHistory';
 const HISTORY_STORE = 'generatedDocuments';
+const HISTORY_SESSION_KEY = 'docGenHistorySessionId';
+
+function getHistorySessionId() {
+  let id = sessionStorage.getItem(HISTORY_SESSION_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    sessionStorage.setItem(HISTORY_SESSION_KEY, id);
+  }
+  return id;
+}
 
 function openHistoryDb() {
   return new Promise((resolve, reject) => {
@@ -1392,19 +1510,60 @@ async function saveToHistory(pdfBlob, wordBlob, baseName) {
   const db = await openHistoryDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(HISTORY_STORE, 'readwrite');
-    tx.objectStore(HISTORY_STORE).add({ baseName, pdfBlob, wordBlob, createdAt: Date.now() });
+    tx.objectStore(HISTORY_STORE).add({
+      baseName,
+      pdfBlob,
+      wordBlob,
+      createdAt: Date.now(),
+      sessionId: getHistorySessionId(),
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
+async function purgeStaleHistoryEntries(db, all, sessionId) {
+  const stale = all.filter((entry) => entry.sessionId !== sessionId);
+  if (!stale.length) return;
+  const tx = db.transaction(HISTORY_STORE, 'readwrite');
+  const store = tx.objectStore(HISTORY_STORE);
+  stale.forEach((entry) => store.delete(entry.id));
+}
+
+// Entries from other (closed) tabs would otherwise sit in IndexedDB —
+// containing filled SSN/EIN documents — until some other tab happens to open
+// the History view. Purging once on every page load, not just on-demand,
+// means a closed tab's data is gone the moment any tab is next opened.
+async function purgeStaleHistoryOnLoad() {
+  try {
+    const db = await openHistoryDb();
+    const sessionId = getHistorySessionId();
+    const all = await new Promise((resolve, reject) => {
+      const request = db.transaction(HISTORY_STORE, 'readonly').objectStore(HISTORY_STORE).getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await purgeStaleHistoryEntries(db, all, sessionId);
+  } catch (err) {
+    console.error('History cleanup failed:', err);
+  }
+}
+purgeStaleHistoryOnLoad();
+
 async function getHistoryEntries() {
   const db = await openHistoryDb();
-  return new Promise((resolve, reject) => {
+  const sessionId = getHistorySessionId();
+  const all = await new Promise((resolve, reject) => {
     const request = db.transaction(HISTORY_STORE, 'readonly').objectStore(HISTORY_STORE).getAll();
-    request.onsuccess = () => resolve(request.result.sort((a, b) => b.createdAt - a.createdAt));
+    request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+
+  await purgeStaleHistoryEntries(db, all, sessionId);
+
+  return all
+    .filter((entry) => entry.sessionId === sessionId)
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 async function deleteHistoryEntry(id) {
@@ -1447,8 +1606,8 @@ async function renderHistory() {
     item.className = 'history-item';
     item.innerHTML = `
       <div class="history-item-info">
-        <span class="history-item-name">${entry.baseName}</span>
-        <span class="history-item-date">${formatHistoryDate(entry.createdAt)}</span>
+        <span class="history-item-name"></span>
+        <span class="history-item-date"></span>
       </div>
       <div class="history-item-actions">
         <button type="button" class="btn btn-secondary" data-action="pdf">PDF</button>
@@ -1456,6 +1615,8 @@ async function renderHistory() {
         <button type="button" class="history-delete-btn" data-action="delete" aria-label="Delete this document">✕</button>
       </div>
     `;
+    item.querySelector('.history-item-name').textContent = entry.baseName;
+    item.querySelector('.history-item-date').textContent = formatHistoryDate(entry.createdAt);
     item.querySelector('[data-action="pdf"]').addEventListener('click', () => {
       downloadBlob(entry.pdfBlob, `${entry.baseName}.pdf`);
     });

@@ -1,6 +1,146 @@
 * { box-sizing: border-box; }
 
 /* =====================================================================
+   Auth gate — blocks the app (including the intro animation beneath it)
+   until MSAL confirms a signed-in Entra ID account. z-index above
+   #introOverlay's 9999 so no protected UI is reachable pre-auth.
+   ===================================================================== */
+
+#authGate {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: #ffffff;
+  text-align: center;
+  padding: 24px;
+}
+
+#authGate.is-hidden { display: none; }
+
+#authGate > .eyebrow { margin: 0; }
+
+.auth-panel {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+#authGate[data-state="loading"] [data-auth-panel="loading"],
+#authGate[data-state="unauthenticated"] [data-auth-panel="unauthenticated"],
+#authGate[data-state="blocked"] [data-auth-panel="blocked"],
+#authGate[data-state="error"] [data-auth-panel="error"] {
+  display: flex;
+}
+
+.auth-panel h1 {
+  margin: 0;
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.auth-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 0, 0, 0.1);
+  border-top-color: #1a1a1a;
+  animation: authSpin 0.8s linear infinite;
+}
+
+@keyframes authSpin { to { transform: rotate(360deg); } }
+
+.auth-message {
+  margin: 0;
+  color: #555;
+  max-width: 340px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.auth-message.auth-error { color: #b02a2a; }
+
+.btn-ms { padding: 17px 32px; }
+
+.ms-logo {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* ---------- Nav user badge ---------- */
+.auth-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.auth-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(261deg 80% 48%);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.auth-user-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.auth-user .auth-user-name { font-weight: 600; }
+.auth-user .auth-user-email { color: #888; font-size: 0.75rem; }
+
+.auth-user .btn-logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid #000;
+  background: transparent;
+  border-radius: 50%;
+  padding: 0;
+  color: #000;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.auth-user .btn-logout svg {
+  width: 16px;
+  height: 16px;
+}
+
+.auth-user .btn-logout:hover {
+  background-color: hsl(261deg 80% 48%);
+  color: #fff;
+  border-color: hsl(261deg 80% 48%);
+}
+
+@media (max-width: 560px) {
+  .auth-user { flex-wrap: wrap; justify-content: flex-end; }
+  .auth-user-text { display: none; }
+}
+
+/* =====================================================================
    Intro animation overlay — plays once on load, then hands off to the
    real page and points the user at the Generate MSA button.
    ===================================================================== */
