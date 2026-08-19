@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Defense-in-depth: even though uploaded filenames are now rendered via
+     textContent (not innerHTML), this CSP blocks inline/injected scripts and
+     any script/connection host beyond the one CDN this app actually uses, so
+     a future XSS bug or a compromised third-party script can't exfiltrate
+     the SSN/EIN data this app processes. cdn.jsdelivr.net is no longer
+     needed anywhere — pizzip/docx/pako and tesseract.js's own worker/WASM
+     core/language data are all vendored locally under vendor/ (see
+     vendor/README.md). Only cdnjs.cloudflare.com remains, for the three
+     SRI-verified <script> tags below. -->
+<!-- connect-src addition: MSAL's silent-renewal (acquireTokenSilent) does a
+     fetch/XHR call to Entra's token endpoint after the interactive
+     loginRedirect()/logoutRedirect() flow lands back on this page (see
+     auth.js / authConfig.js) — sign-in/out themselves are full top-level
+     navigations, not fetch calls, so they aren't what connect-src governs
+     here. No Microsoft Graph (or any other API) host is listed — this app
+     only requests openid/profile/email scopes and reads identity off the
+     ID token's own claims, so it never acquires or sends a Graph access
+     token. frame-src: MSAL opens a hidden iframe against Entra's authorize
+     endpoint for silent SSO checks (also part of acquireTokenSilent). -->
+
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com; worker-src 'self' blob:; connect-src 'self' https://cdnjs.cloudflare.com https://login.microsoftonline.com; frame-src https://login.microsoftonline.com; img-src 'self' data: blob:; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+<title>Document Generator</title>
+<link rel="stylesheet" href="style.css?v=20260813-8">
+</head>
+<body>
+
+  <!-- Blocks all app content (including the intro animation) until MSAL
+       confirms an authenticated, allow-listed Entra ID session. See
+       auth-ui.js. Flat full-bleed layout — deliberately not a boxed
+       card — matching the rest of the site's .hero typography. -->
+  <div id="authGate" data-state="loading">
+    <p class="eyebrow">Document Generator</p>
+
+    <div class="auth-panel" data-auth-panel="loading">
+      <div class="auth-spinner" aria-hidden="true"></div>
+      <p class="auth-message">Checking sign-in status&hellip;</p>
+    </div>
+
+    <div class="auth-panel" data-auth-panel="unauthenticated">
+      <h1>Sign in to continue</h1>
+      <p class="auth-message">Use your Microsoft work or school account to access this app.</p>
+      <button type="button" class="btn btn-ms" id="loginBtn">
+        <svg class="ms-logo" viewBox="0 0 21 21" aria-hidden="true" focusable="false">
+          <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+          <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+          <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+          <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+        </svg>
+        <span>Sign in with Microsoft</span>
+      </button>
+    </div>
+
+    <div class="auth-panel" data-auth-panel="blocked">
+      <h1>Access restricted</h1>
+      <p class="auth-message auth-error" id="authBlockedMessage">This account isn't authorized to use this application.</p>
+      <p class="auth-message">Sign in with an approved account, or contact an administrator if you believe this is a mistake.</p>
+      <button type="button" class="btn" id="authSwitchAccountBtn">Use a different account</button>
+    </div>
+
+    <div class="auth-panel" data-auth-panel="error">
+      <h1>Sign-in failed</h1>
+      <p class="auth-message auth-error" id="authErrorMessage">Please try again.</p>
+      <button type="button" class="btn" id="authRetryBtn">Try again</button>
+    </div>
+  </div>
+
+  <div id="introOverlay">
+    <div class="intro-stage">
+      <div class="intro-floor"></div>
+      <div class="elevator-frame" id="elevator">
+        <div class="lift-indicator"><span class="lift-indicator-dot"></span></div>
+        <div class="lift-cab">
+          <div class="door door-left"></div>
+          <div class="door door-right"></div>
+          <span class="button-text">DOCUMENT GENERATOR</span>
+        </div>
+      </div>
+
+      <div class="man-container" id="man">
+        <div class="man-body">
+          <div class="hair-back"></div>
+          <div class="head">
+            <div class="ear"></div>
+            <div class="hair-top"></div>
+            <div class="eyebrow"></div>
+            <div class="eye"></div>
+            <div class="mouth"></div>
+          </div>
+          <div class="neck"></div>
+          <div class="shirt-collar"></div>
+          <div class="tie"></div>
+          <div class="jacket">
+            <div class="lapel left"></div>
+            <div class="lapel right"></div>
+            <div class="button"></div>
+            <div class="button second"></div>
+            <div class="pocket"></div>
+          </div>
+          <div class="belt"><div class="buckle"></div></div>
+          <div class="leg left"><div class="shin"><div class="shoe"></div></div></div>
+          <div class="leg right"><div class="shin"><div class="shoe"></div></div></div>
+          <div class="arm">
+            <div class="forearm">
+              <div class="briefcase">
+                <div class="handle"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <nav class="topnav">
+    <span class="brand">Document Generator</span>
+    <div class="nav-links">
+      <a href="#" class="nav-link active" id="navGeneratorLink">Generator</a>
+      <a href="#" class="nav-link" id="navHistoryLink">History</a>
+    </div>
+    <!-- Populated from the account's own name/ID-token claims only after
+         sign-in succeeds (see auth-ui.js) — no Graph or other API call.
+         Text content is set via textContent, never innerHTML, so a display
+         name or claim value containing markup can't inject HTML. -->
+    <div class="auth-user" id="authUser" hidden>
+      <span class="auth-avatar" id="authAvatar" aria-hidden="true"></span>
+      <span class="auth-user-text">
+        <span class="auth-user-name" id="authUserName"></span>
+        <span class="auth-user-email" id="authUserEmail"></span>
+      </span>
+      <button type="button" class="btn-logout" id="logoutBtn" aria-label="Sign out" title="Sign out">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+          <polyline points="16 17 21 12 16 7"></polyline>
+          <line x1="21" y1="12" x2="9" y2="12"></line>
+        </svg>
+      </button>
+    </div>
+  </nav>
+
+  <section class="history-view" id="historyView" hidden>
+    <div class="history-header">
+      <p class="eyebrow">Saved locally</p>
+      <h1>History</h1>
+      <p class="subtitle">Documents generated on this device — stored in this browser only.</p>
+    </div>
+    <div class="history-list" id="historyList"></div>
+  </section>
+
+  <main class="stage" id="mainStage">
+    <section class="hero">
+      <p class="eyebrow">MSA Automation</p>
+      <h1>Document<br>Generator</h1>
+      <p class="subtitle">Upload a W-9 and generate a Master Service Agreement in one click.</p>
+      <p class="status" id="status" role="status"></p>
+
+      <dl class="w9-summary" id="w9Summary" hidden>
+        <div>
+          <dt>Company / Business Name</dt>
+          <dd><input type="text" id="w9CompanyName" placeholder="—"></dd>
+        </div>
+        <div>
+          <dt>Tax ID</dt>
+          <dd class="w9-taxid-fields">
+            <input type="text" id="w9TaxId" placeholder="—">
+            <select id="w9TaxIdType">
+              <option value="SSN">SSN</option>
+              <option value="EIN">EIN</option>
+            </select>
+          </dd>
+        </div>
+        <div>
+          <dt>Address</dt>
+          <dd><input type="text" id="w9Address" placeholder="—"></dd>
+        </div>
+      </dl>
+      <p class="hint w9-edit-hint" id="w9EditHint" hidden>You can correct any of these before continuing.</p>
+
+      <details class="w9-debug" id="w9Debug" hidden>
+        <summary>Raw extracted text (debug)</summary>
+        <pre id="w9RawText"></pre>
+      </details>
+    </section>
+
+    <section class="action-panel">
+      <div class="wizard" id="wizard">
+        <div class="wizard-loading" id="wizardLoading" hidden>
+          <div class="loader-stage" aria-hidden="true">
+            <div class="loader-ground-shadow"></div>
+
+            <div class="loader-file-card">
+              <div class="loader-line accent"></div>
+              <div class="loader-line full"></div>
+              <div class="loader-line medium"></div>
+              <div class="loader-line full"></div>
+            </div>
+
+            <div class="loader-file-card">
+              <div class="loader-line accent"></div>
+              <div class="loader-line full"></div>
+              <div class="loader-line medium"></div>
+            </div>
+
+            <div class="loader-file-card">
+              <div class="loader-line accent"></div>
+              <div class="loader-line full"></div>
+              <div class="loader-line full"></div>
+            </div>
+
+            <div class="loader-file-card">
+              <div class="loader-line accent"></div>
+              <div class="loader-line medium"></div>
+              <div class="loader-line full"></div>
+            </div>
+          </div>
+          <p id="wizardLoadingText">Extracting data...</p>
+        </div>
+
+        <div class="wizard-step active" data-step="1">
+          <span class="step-label">Step 1</span>
+          <h2>Upload files</h2>
+          <div class="upload-block">
+            <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+            <label for="fileInput" class="btn">Upload W-9</label>
+            <p class="hint">Upload a W-9 PDF</p>
+            <ul class="file-list" id="fileList"></ul>
+          </div>
+          <button type="button" class="btn btn-nav step1-extract-btn" id="extractDataBtn" disabled>Extract Data</button>
+          <div class="wizard-nav">
+            <button type="button" class="btn btn-nav" id="step1NextBtn" disabled>Next</button>
+          </div>
+        </div>
+
+        <div class="wizard-step" data-step="2">
+          <span class="step-label">Step 2</span>
+          <h2>Upload MSA template</h2>
+          <div class="upload-block">
+            <input
+              type="file"
+              id="msaTemplateInput"
+              accept="application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              hidden
+            >
+            <label for="msaTemplateInput" class="btn">Upload MSA</label>
+            <p class="hint">Upload the MSA template (PDF or Word) to fill with the extracted data</p>
+            <ul class="file-list" id="msaFileList"></ul>
+          </div>
+          <button type="button" class="btn step1-extract-btn" id="generateBtn" disabled>
+            <span class="btn-label">Insert Data</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+          <div class="wizard-nav">
+            <button type="button" class="btn btn-secondary" id="step2BackBtn">Back</button>
+            <button type="button" class="btn btn-nav" id="step2NextBtn" disabled>Next</button>
+          </div>
+        </div>
+
+        <div class="wizard-step" data-step="3">
+          <span class="step-label">Step 3</span>
+          <h2>Manual details</h2>
+          <p class="hint">These aren't on the W-9, so enter them by hand.</p>
+          <div class="manual-fields">
+            <label>Contractor Representative(s)<input type="text" id="manualRep" placeholder="e.g. Jane Doe"></label>
+            <label>Role<input type="text" id="manualRole" placeholder="e.g. GIS Architect"></label>
+            <label>Location<input type="text" id="manualLocation" placeholder="e.g. Remote"></label>
+            <label>Start Date
+              <span class="date-field">
+                <input type="text" id="manualStartDate" placeholder="e.g. August 5th, 2026">
+                <button type="button" class="date-field-trigger" id="manualStartDatePickerBtn" aria-label="Choose a date">📅</button>
+                <input type="date" id="manualStartDatePicker" class="date-field-native" tabindex="-1" aria-hidden="true">
+              </span>
+            </label>
+            <label>Billing Rate
+              <span class="billing-rate-field">
+                <span class="billing-rate-affix">$</span>
+                <input type="number" id="manualBillingRate" placeholder="70" min="0" step="0.01" inputmode="decimal">
+                <span class="billing-rate-affix">/hr</span>
+              </span>
+            </label>
+          </div>
+          <button type="button" class="btn step1-extract-btn" id="applyManualBtn">Apply Details</button>
+          <div class="wizard-nav">
+            <button type="button" class="btn btn-secondary" id="step3BackBtn">Back</button>
+            <button type="button" class="btn btn-nav" id="step3NextBtn" disabled>Next</button>
+          </div>
+        </div>
+
+        <div class="wizard-step" data-step="4">
+          <span class="step-label">Step 4</span>
+          <h2>Download</h2>
+          <div class="download-options">
+            <button type="button" class="btn btn-download" id="downloadPdfBtn" disabled>Download as PDF</button>
+            <button type="button" class="btn btn-download" id="downloadWordBtn" disabled>Download as Word (.docx)</button>
+          </div>
+          <div class="wizard-nav">
+            <button type="button" class="btn btn-secondary" id="step4BackBtn">Back</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js" integrity="sha512-kMjICPeuRYAQ5KvL0+s/ln7a+96IKohiAtfaXKg37aSLmzfP0nFweeaE7lDRN01XIjn0jUfYT5kSFM4XmcTThQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js" integrity="sha512-z8IYLHO8bTgFqj+yrPyIJnzBDf7DDhWwiEsk4sY+Oe6J2M+WQequeGS7qioI5vT6rXgVRb4K1UVQC5ER7MKzKQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script type="module" src="auth-ui.js?v=1"></script>
+<script type="module" src="script.js?v=20260813-16"></script>
+</body>
+</html>

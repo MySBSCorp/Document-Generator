@@ -1,0 +1,1683 @@
+* { box-sizing: border-box; }
+
+/* =====================================================================
+   Auth gate — blocks the app (including the intro animation beneath it)
+   until MSAL confirms a signed-in Entra ID account. z-index above
+   #introOverlay's 9999 so no protected UI is reachable pre-auth.
+   ===================================================================== */
+
+#authGate {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: #ffffff;
+  text-align: center;
+  padding: 24px;
+}
+
+#authGate.is-hidden { display: none; }
+
+#authGate > .eyebrow { margin: 0; }
+
+.auth-panel {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+#authGate[data-state="loading"] [data-auth-panel="loading"],
+#authGate[data-state="unauthenticated"] [data-auth-panel="unauthenticated"],
+#authGate[data-state="blocked"] [data-auth-panel="blocked"],
+#authGate[data-state="error"] [data-auth-panel="error"] {
+  display: flex;
+}
+
+.auth-panel h1 {
+  margin: 0;
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.auth-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 0, 0, 0.1);
+  border-top-color: #1a1a1a;
+  animation: authSpin 0.8s linear infinite;
+}
+
+@keyframes authSpin { to { transform: rotate(360deg); } }
+
+.auth-message {
+  margin: 0;
+  color: #555;
+  max-width: 340px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.auth-message.auth-error { color: #b02a2a; }
+
+.btn-ms { padding: 17px 32px; }
+
+.ms-logo {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* ---------- Nav user badge ---------- */
+.auth-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.auth-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(261deg 80% 48%);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.auth-user-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.auth-user .auth-user-name { font-weight: 600; }
+.auth-user .auth-user-email { color: #888; font-size: 0.75rem; }
+
+.auth-user .btn-logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid #000;
+  background: transparent;
+  border-radius: 50%;
+  padding: 0;
+  color: #000;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.auth-user .btn-logout svg {
+  width: 16px;
+  height: 16px;
+}
+
+.auth-user .btn-logout:hover {
+  background-color: hsl(261deg 80% 48%);
+  color: #fff;
+  border-color: hsl(261deg 80% 48%);
+}
+
+@media (max-width: 560px) {
+  .auth-user { flex-wrap: wrap; justify-content: flex-end; }
+  .auth-user-text { display: none; }
+}
+
+/* =====================================================================
+   Intro animation overlay — plays once on load, then hands off to the
+   real page and points the user at the Generate MSA button.
+   ===================================================================== */
+
+#introOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.7s ease;
+}
+
+/* The backdrop fades to transparent (revealing the real page) while the button is
+   still flying to its real position — content isn't hidden via opacity/visibility
+   here, since that would also hide the traveling button. Final cleanup removes the
+   whole overlay from the DOM once the fly animation finishes (see script.js). */
+#introOverlay.is-hidden {
+  background: transparent;
+  pointer-events: none;
+}
+
+#introOverlay .intro-stage {
+    position: relative;
+    width: 600px;
+    height: 400px;
+    max-width: 100vw;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    animation: sceneIn 0.8s ease-out forwards;
+}
+
+/* Grounding line the man walks on and the lift sits on — positioned to match
+   both of their bases exactly (measured, not guessed), fading at the edges
+   so it reads as a floor rather than a hard rule across the scene. */
+#introOverlay .intro-floor {
+    position: absolute;
+    left: 40px;
+    right: 40px;
+    top: 309px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.18) 15%, rgba(0, 0, 0, 0.18) 85%, transparent);
+    z-index: 0;
+    transition: opacity 0.3s ease;
+}
+
+/* Only the overlay's background fades on hand-off (so the traveling button
+   stays visible) — everything else left over in the scene, like this floor
+   line, has to fade itself out in step, or it lingers visibly on top of the
+   real page until the overlay node is finally removed a second-plus later. */
+#introOverlay.is-hidden .intro-floor {
+    opacity: 0;
+}
+
+/* Opacity only (no transform) — a transform here would make this element the
+   containing block for the button's position:fixed fly-away, breaking its
+   viewport-relative coordinates. */
+@keyframes sceneIn {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+/* --- Elevator (Lift) Container ---
+   This outer element is now a pure positioning/sizing box (left/width/height,
+   morph transition) with NO overflow-hidden, so the indicator light — which
+   sits just above it at a negative offset — never gets clipped. All the visual
+   styling (gradient, border, door-clipping) lives on the inner .lift-cab instead.
+   z-index sits above the man (5) by default so closed doors actually hide him;
+   while doors-open is present it drops below him so he's visible walking into
+   the open doorway instead of vanishing behind the (still-open) frame. */
+#introOverlay .elevator-frame {
+    position: absolute;
+    left: 230px;
+    width: 140px;
+    height: 220px;
+    transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 6;
+}
+
+#introOverlay .elevator-frame.doors-open {
+    z-index: 2;
+}
+
+#introOverlay .elevator-frame.morphed-button {
+    width: 300px;
+    height: 54px;
+    left: 150px;
+    cursor: pointer;
+}
+
+/* Indicator light above the doors — glows green while they're open, dims red
+   the rest of the time, and fades away once the lift has become the button.
+   A sibling of .lift-cab (not a child), so the cab's overflow:hidden can't clip it. */
+#introOverlay .lift-indicator {
+    position: absolute;
+    top: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 34px;
+    height: 14px;
+    background: #1c1f22;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: opacity 0.3s ease;
+    z-index: 11;
+}
+#introOverlay .lift-indicator-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #8a1f1f;
+    box-shadow: 0 0 3px rgba(138, 31, 31, 0.6);
+    transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+#introOverlay .elevator-frame.doors-open .lift-indicator-dot {
+    background: #3ecf6e;
+    box-shadow: 0 0 6px rgba(62, 207, 110, 0.85);
+}
+#introOverlay .elevator-frame.morphed-button .lift-indicator {
+    opacity: 0;
+}
+
+/* The visual cab: gradient + inset shadow give it real depth instead of a flat
+   grey box. Fills the outer frame exactly (inset:0) so it always matches its
+   current size, whether that's the tall lift shape or the morphed pill button. */
+#introOverlay .lift-cab {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, #fbfbfc 0%, #e9ebee 55%, #dde0e4 100%);
+    border: 2px solid #2b2f33;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow:
+        inset 0 3px 8px rgba(0, 0, 0, 0.18),
+        inset 0 -4px 10px rgba(0, 0, 0, 0.1),
+        0 10px 22px rgba(0, 0, 0, 0.12);
+    transition: border-radius 0.8s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.5s ease,
+        border-color 0.5s ease, box-shadow 0.5s ease;
+}
+
+#introOverlay .lift-cab::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(0, 0, 0, 0.1), transparent 16%, transparent 84%, rgba(0, 0, 0, 0.1));
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 1;
+}
+
+/* A warm "ding" glow the instant the doors finish opening */
+#introOverlay .lift-cab::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle, rgba(255, 214, 130, 0.55), transparent 70%);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
+}
+#introOverlay .elevator-frame.doors-open .lift-cab::after {
+    animation: dingFlash 0.6s ease-out;
+}
+@keyframes dingFlash {
+    0%   { opacity: 0.85; }
+    100% { opacity: 0; }
+}
+
+/* Morphing into Button State */
+#introOverlay .elevator-frame.morphed-button .lift-cab {
+    border-radius: 30px;
+    background: #ffffff;
+    border: 1.5px solid #000000;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+
+#introOverlay .elevator-frame.morphed-button .lift-cab::before {
+    opacity: 0;
+}
+
+/* Elevator Doors — brushed-metal gradient with a bright seam where they meet and a small handle */
+#introOverlay .door {
+    position: absolute;
+    top: 0;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(90deg, #9aa7b3 0%, #b9c3cd 45%, #a4b0bb 55%, #7e8b97 100%);
+    border: 1px solid #5c6773;
+    transition: transform 1s cubic-bezier(0.65, 0, 0.35, 1);
+    z-index: 10;
+}
+#introOverlay .door::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 3px;
+    height: 26px;
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 2px;
+    transform: translateY(-50%);
+}
+
+#introOverlay .door-left {
+    left: 0;
+    border-right: 1px solid rgba(255, 255, 255, 0.5);
+    transform: translateX(0); /* Closed by default */
+}
+#introOverlay .door-left::after {
+    right: 6px;
+}
+
+#introOverlay .door-right {
+    right: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.5);
+    transform: translateX(0); /* Closed by default */
+}
+#introOverlay .door-right::after {
+    left: 6px;
+}
+
+/* Doors Open State — slid open to reveal the elevator before the man walks in */
+#introOverlay .elevator-frame.doors-open .door-left {
+    transform: translateX(-100%);
+}
+#introOverlay .elevator-frame.doors-open .door-right {
+    transform: translateX(100%);
+}
+
+#introOverlay .elevator-frame.morphed-button .door {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+/* Button Text */
+#introOverlay .button-text {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 1.5px;
+    color: #000000;
+    text-transform: uppercase;
+    opacity: 0;
+    z-index: 20;
+    transition: opacity 0.5s ease 0.4s;
+    white-space: nowrap;
+}
+
+#introOverlay .elevator-frame.morphed-button .button-text {
+    opacity: 1;
+}
+
+/* --- 2D Businessman Character --- */
+#introOverlay .man-container {
+    position: absolute;
+    /* Explicit top (rather than relying on flex auto-centering, which centers
+       based on each element's own height) so his feet land exactly on
+       .intro-floor at the same level as the lift's base. Accounts for the
+       shoe visually overshooting the container's own box (measured, not
+       guessed) — the leg + shoe geometry runs ~34px past the nominal
+       180px-tall box before the 0.65 scale is even applied. */
+    top: 139.4px;
+    left: 20px;
+    width: 100px;
+    height: 180px;
+    transform: scale(0.65);
+    z-index: 5;
+    /* A gentle ease instead of linear, so he accelerates into the walk and settles
+       out of it rather than moving at one constant robotic speed the whole way. */
+    transition: transform 2.2s cubic-bezier(0.45, 0, 0.4, 1), opacity 0.4s ease;
+}
+
+/* Walking Motion into the Lift */
+#introOverlay .man-container.walk-in {
+    transform: translateX(240px) scale(0.65);
+}
+
+#introOverlay .man-container.entered {
+    opacity: 0; /* Fades out behind closing doors */
+    pointer-events: none; /* so the invisible man doesn't swallow the click meant for the button beneath */
+}
+
+/* Head & Face */
+#introOverlay .head {
+    position: absolute;
+    top: 15px;
+    right: 25px;
+    width: 26px;
+    height: 32px;
+    background-color: var(--skin);
+    border-radius: 40% 50% 50% 40%;
+    transform-origin: 50% 100%;
+}
+/* A light nod synced to each footfall — only while .stepping (see below) */
+#introOverlay .man-container.stepping .head {
+    animation: headTilt 0.5s ease-in-out infinite;
+}
+@keyframes headTilt {
+    0%, 100% { transform: rotate(-2deg); }
+    50%      { transform: rotate(2deg); }
+}
+
+#introOverlay .hair-top {
+    position: absolute;
+    top: -6px;
+    left: -4px;
+    width: 34px;
+    height: 13px;
+    background-color: var(--hair);
+    border-radius: 50% 60% 40% 40%;
+}
+/* A soft highlight for a touch of gloss instead of one flat block of color */
+#introOverlay .hair-top::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 7px;
+    width: 15px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.28);
+    border-radius: 50%;
+    transform: rotate(-12deg);
+}
+
+#introOverlay .hair-back {
+    position: absolute;
+    top: 18px;
+    right: 47px;
+    width: 14px;
+    height: 22px;
+    background-color: var(--hair);
+    border-radius: 50% 0 0 50%;
+}
+
+#introOverlay .ear {
+    position: absolute;
+    top: 12px;
+    left: 3px;
+    width: 6px;
+    height: 8px;
+    background-color: var(--skin);
+    border-radius: 50%;
+}
+
+#introOverlay .eyebrow {
+    position: absolute;
+    top: 9px;
+    right: 4px;
+    width: 8px;
+    height: 2px;
+    background-color: var(--hair);
+    border-radius: 2px;
+}
+
+#introOverlay .eye {
+    position: absolute;
+    top: 13px;
+    right: 6px;
+    width: 3px;
+    height: 4px;
+    background-color: #222;
+    border-radius: 50%;
+}
+
+#introOverlay .mouth {
+    position: absolute;
+    top: 21px;
+    right: 5px;
+    width: 6px;
+    height: 1.5px;
+    background-color: #8a5a45;
+    border-radius: 1px;
+}
+
+#introOverlay .neck {
+    position: absolute;
+    top: 44px;
+    right: 34px;
+    width: 10px;
+    height: 12px;
+    background-color: var(--skin);
+}
+
+/* Torso & Suit */
+#introOverlay .jacket {
+    position: absolute;
+    top: 54px;
+    right: 25px;
+    width: 38px;
+    height: 75px;
+    background-color: var(--suit);
+    border-radius: 8px 5px 3px 3px;
+    clip-path: polygon(0 0, 100% 0, 85% 100%, 0% 95%);
+}
+
+/* Lapels flanking the collar opening — small dark-suit triangles instead of a
+   completely flat, featureless front panel */
+#introOverlay .jacket .lapel {
+    position: absolute;
+    top: 0;
+    width: 11px;
+    height: 26px;
+    background-color: var(--suit-dark);
+}
+#introOverlay .jacket .lapel.left {
+    left: 1px;
+    clip-path: polygon(0 0, 100% 0, 30% 100%);
+}
+#introOverlay .jacket .lapel.right {
+    right: 1px;
+    clip-path: polygon(0 0, 100% 0, 70% 100%);
+}
+
+#introOverlay .jacket .button {
+    position: absolute;
+    top: 36px;
+    right: 6px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background-color: #1a2b2e;
+}
+#introOverlay .jacket .button.second {
+    top: 46px;
+}
+
+#introOverlay .jacket .pocket {
+    position: absolute;
+    top: 53px;
+    right: 5px;
+    width: 13px;
+    height: 1.5px;
+    border-radius: 1px;
+    background-color: var(--suit-dark);
+}
+
+#introOverlay .shirt-collar {
+    position: absolute;
+    top: 54px;
+    right: 32px;
+    width: 16px;
+    height: 25px;
+    background-color: var(--shirt);
+    clip-path: polygon(20% 0, 80% 0, 100% 100%, 0% 100%);
+    z-index: 2;
+}
+
+#introOverlay .tie {
+    position: absolute;
+    top: 58px;
+    right: 36px;
+    width: 6px;
+    height: 52px;
+    background-color: var(--tie);
+    clip-path: polygon(30% 0, 70% 0, 100% 85%, 50% 100%, 0 85%);
+    z-index: 3;
+}
+
+#introOverlay .belt {
+    position: absolute;
+    top: 120px;
+    right: 28px;
+    width: 32px;
+    height: 6px;
+    background-color: var(--belt);
+    z-index: 4;
+}
+#introOverlay .buckle {
+    position: absolute;
+    top: 0.5px;
+    left: 13px;
+    width: 6px;
+    height: 5px;
+    background-color: #9a9a9a;
+    border: 1px solid #d4af37;
+}
+
+/* A relative wrapper for the walking bob, kept separate from man-container's own
+   translateX/scale so the two transforms don't fight on the same element */
+#introOverlay .man-body {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* Bobs twice per stride (matches a footfall each half-cycle) plus a touch of
+   forward lean into the stride — only while .stepping (actively walking) */
+#introOverlay .man-container.stepping .man-body {
+    animation: bodyBob 0.25s ease-in-out infinite;
+}
+@keyframes bodyBob {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50%      { transform: translateY(-2px) rotate(1deg); }
+}
+
+/* Legs & Walking Cycle — a real hip -> knee -> ankle chain instead of one rigid
+   segment, gated to .stepping (added exactly while he's translating, removed the
+   moment he arrives) so he stands naturally still before/after instead of either
+   marching in place beforehand or continuing to march in place once he's inside. */
+#introOverlay .leg.left {
+    position: absolute;
+    top: 125px;
+    right: 42px;
+    width: 15px;
+    height: 44px;
+    background-color: var(--suit);
+    transform-origin: top center;
+}
+#introOverlay .man-container.stepping .leg.left {
+    animation: thighSwing 0.5s ease-in-out infinite;
+}
+
+#introOverlay .leg.right {
+    position: absolute;
+    top: 125px;
+    right: 28px;
+    width: 15px;
+    height: 44px;
+    background-color: var(--suit-dark);
+    transform-origin: top center;
+    z-index: -1;
+}
+#introOverlay .man-container.stepping .leg.right {
+    animation: thighSwing 0.5s ease-in-out infinite;
+    animation-delay: -0.25s;
+}
+
+/* A proper stride: heel-strike forward, roll through stance, quick toe-off back */
+@keyframes thighSwing {
+    0%   { transform: rotate(-26deg); }
+    15%  { transform: rotate(-9deg); }
+    40%  { transform: rotate(15deg); }
+    50%  { transform: rotate(22deg); }
+    65%  { transform: rotate(9deg); }
+    85%  { transform: rotate(-20deg); }
+    100% { transform: rotate(-26deg); }
+}
+
+#introOverlay .shin {
+    position: absolute;
+    top: 44px;
+    left: 0;
+    width: 15px;
+    height: 41px;
+    transform-origin: top center;
+}
+#introOverlay .leg.left .shin { background-color: var(--suit); }
+#introOverlay .leg.right .shin { background-color: var(--suit-dark); }
+
+#introOverlay .man-container.stepping .leg.left .shin {
+    animation: shinBend 0.5s ease-in-out infinite;
+}
+#introOverlay .man-container.stepping .leg.right .shin {
+    animation: shinBend 0.5s ease-in-out infinite;
+    animation-delay: -0.25s;
+}
+
+/* Knee rotation is nested inside the thigh, so these are LOCAL angles that add to
+   the thigh's current angle to give the shin's true on-screen orientation. Every
+   value here stays positive so the knee only ever bends the one correct way —
+   it can never reverse-bend into a backward-looking kick during the swing. */
+@keyframes shinBend {
+    0%   { transform: rotate(4deg); }
+    15%  { transform: rotate(2deg); }
+    40%  { transform: rotate(5deg); }
+    50%  { transform: rotate(12deg); }
+    65%  { transform: rotate(46deg); }
+    85%  { transform: rotate(8deg); }
+    100% { transform: rotate(4deg); }
+}
+
+#introOverlay .shoe {
+    position: absolute;
+    bottom: -4px;
+    left: -6px;
+    width: 25px;
+    height: 9px;
+    background-color: var(--shoe);
+    border-radius: 3px 8px 1px 1px;
+}
+/* A thin sole line so the shoe reads as more than a plain block */
+#introOverlay .shoe::after {
+    content: "";
+    position: absolute;
+    bottom: 1.5px;
+    left: 2px;
+    width: 19px;
+    height: 1px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 1px;
+}
+
+/* Arm & Briefcase — a real shoulder -> elbow chain, swinging opposite the near
+   leg for a natural counterbalance while walking */
+#introOverlay .arm {
+    position: absolute;
+    top: 58px;
+    right: 46px;
+    width: 14px;
+    height: 32px;
+    background-color: var(--suit);
+    border-radius: 8px 8px 0 0;
+    transform: rotate(5deg);
+    transform-origin: top center;
+    z-index: 5;
+}
+#introOverlay .man-container.stepping .arm {
+    animation: upperArmSwing 0.5s ease-in-out infinite;
+    animation-delay: -0.25s;
+}
+@keyframes upperArmSwing {
+    0%   { transform: rotate(-12deg); }
+    50%  { transform: rotate(22deg); }
+    100% { transform: rotate(-12deg); }
+}
+
+#introOverlay .forearm {
+    position: absolute;
+    top: 32px;
+    left: 0;
+    width: 14px;
+    height: 33px;
+    background-color: var(--suit);
+    border-radius: 0 0 8px 8px;
+    transform-origin: top center;
+}
+#introOverlay .man-container.stepping .forearm {
+    animation: forearmBend 0.5s ease-in-out infinite;
+    animation-delay: -0.25s;
+}
+/* Same local-angle-adds-to-parent logic as the knee — the elbow only ever flexes forward */
+@keyframes forearmBend {
+    0%   { transform: rotate(4deg); }
+    50%  { transform: rotate(8deg); }
+    100% { transform: rotate(4deg); }
+}
+
+#introOverlay .briefcase {
+    position: absolute;
+    top: 28px;
+    left: -22px;
+    width: 46px;
+    height: 32px;
+    background-color: var(--briefcase);
+    border: 1px solid var(--briefcase-dark);
+    border-radius: 3px;
+}
+
+#introOverlay .briefcase .handle {
+    position: absolute;
+    top: -6px;
+    left: 17px;
+    width: 10px;
+    height: 5px;
+    border: 1.5px solid #333;
+    border-bottom: none;
+}
+
+/* ---------- CSS variables for the businessman's palette ---------- */
+#introOverlay {
+    --skin: #f7cbac;
+    --hair: #5a3d28;
+    --suit: #2c5d63;
+    --suit-dark: #1f4347;
+    --tie: #d93829;
+    --briefcase: #9b5338;
+    --briefcase-dark: #7c412a;
+    --shirt: #ffffff;
+    --shoe: #1e2830;
+    --belt: #4a2c11;
+}
+
+/* Pulse highlight drawing attention to the real Generate MSA button once the intro hands off */
+#generateBtn.cta-pulse {
+  animation: ctaPulse 0.8s ease-out 2;
+}
+@keyframes ctaPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(93, 24, 220, 0.55); }
+  70%  { box-shadow: 0 0 0 16px rgba(93, 24, 220, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(93, 24, 220, 0); }
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: #ffffff;
+  color: #1a1a1a;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  border: 1px solid #000;
+}
+
+/* ---------- Nav ---------- */
+.topnav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 48px;
+  border-bottom: 1px solid #000;
+  flex: none;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.2px;
+}
+
+.brand.cta-pulse {
+  animation: brandPulse 0.8s ease-out 2;
+}
+@keyframes brandPulse {
+  0%   { text-shadow: 0 0 0 rgba(93, 24, 220, 0); color: hsl(261deg 80% 48%); }
+  50%  { text-shadow: 0 0 12px rgba(93, 24, 220, 0.55); color: hsl(261deg 80% 48%); }
+  100% { text-shadow: 0 0 0 rgba(93, 24, 220, 0); color: #1a1a1a; }
+}
+
+.nav-links { display: flex; gap: 28px; }
+
+.nav-link {
+  position: relative;
+  color: #666;
+  text-decoration: none;
+  font-size: 0.92rem;
+  transition: color 0.3s ease;
+}
+
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -6px;
+  width: 0;
+  height: 2px;
+  background: currentColor;
+  transition: width 0.25s ease;
+}
+
+.nav-link:hover { color: #1a1a1a; }
+.nav-link:hover::after,
+.nav-link.active::after { width: 100%; }
+.nav-link.active { color: hsl(261deg 80% 48%); font-weight: 600; }
+
+/* ---------- History view (generated docs stored locally in IndexedDB) ---------- */
+.history-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 56px 72px;
+  overflow-y: auto;
+}
+
+.history-view[hidden] {
+  display: none;
+}
+
+.history-header .eyebrow { margin: 0 0 14px; }
+.history-header h1 {
+  margin: 0 0 10px;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  font-weight: 800;
+  letter-spacing: -1px;
+}
+.history-header .subtitle { margin: 0 0 36px; max-width: 520px; }
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 780px;
+}
+
+.history-empty {
+  color: #999;
+  font-size: 0.95rem;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 22px;
+  border: 1px solid #eee;
+  border-radius: 14px;
+}
+
+.history-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.history-item-name {
+  font-weight: 700;
+  font-size: 0.98rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-date {
+  font-size: 0.8rem;
+  color: #999;
+}
+
+.history-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.history-item-actions .btn {
+  padding: 8px 20px;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.history-delete-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #eee;
+  border-radius: 50%;
+  background: transparent;
+  color: #999;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.history-delete-btn:hover {
+  border-color: #d13c3c;
+  color: #d13c3c;
+}
+
+/* ---------- Full-screen stage ---------- */
+.stage {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  min-height: 0;
+}
+
+.stage[hidden] {
+  display: none;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 72px;
+  border-right: 1px solid #000;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.eyebrow {
+  margin: 0 0 18px;
+  color: hsl(261deg 80% 48%);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  animation: rise 0.5s ease both;
+}
+
+.hero h1 {
+  margin: 0 0 26px;
+  font-size: clamp(2.6rem, 5vw, 4.2rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -1px;
+  animation: rise 0.55s ease 0.08s both;
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 460px;
+  color: #666;
+  font-size: 1.05rem;
+  line-height: 1.6;
+  animation: rise 0.55s ease 0.16s both;
+}
+
+.status {
+  margin: 28px 0 0;
+  min-height: 1.4em;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: hsl(261deg 80% 40%);
+  transition: opacity 0.25s ease, color 0.25s ease;
+}
+
+/* Re-triggered by script.js on every status update, so new messages settle
+   in instead of just popping into the existing text node */
+.status.flash {
+  animation: statusFlash 0.35s ease;
+}
+@keyframes statusFlash {
+  0%   { opacity: 0; transform: translateY(-4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.status.error { color: #d13c3c; }
+
+/* ---------- W-9 extracted-fields summary (left page) ---------- */
+.w9-summary {
+  margin: 22px 0 0;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: rise 0.4s ease both;
+}
+
+.w9-summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.w9-summary dt {
+  color: #999;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.w9-summary dd {
+  margin: 0;
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.w9-summary dd input,
+.w9-summary dd select {
+  width: 100%;
+  text-align: right;
+  font-size: 0.92rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #1a1a1a;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: transparent;
+}
+
+.w9-summary dd input:hover,
+.w9-summary dd select:hover {
+  border-color: #ddd;
+}
+
+.w9-summary dd input:focus,
+.w9-summary dd select:focus {
+  outline: none;
+  border-color: hsl(261deg 80% 48%);
+  box-shadow: 0 0 0 3px hsl(261deg 85% 92%);
+  background: #fff;
+}
+
+.w9-taxid-fields {
+  gap: 8px;
+}
+
+/* Missing/invalid required field — used on W-9 summary inputs, manual-detail
+   inputs, and the MSA upload zone/file list when a step's validation fails. */
+.field-error {
+  border-color: #d13c3c !important;
+  box-shadow: 0 0 0 3px rgba(209, 60, 60, 0.15) !important;
+}
+
+.file-list li.field-error,
+.upload-block.field-error .hint {
+  color: #d13c3c;
+}
+
+.w9-taxid-fields input {
+  flex: 1;
+  min-width: 0;
+}
+
+.w9-summary dd.w9-taxid-fields select {
+  flex: none;
+  width: auto;
+  text-align: left;
+}
+
+.w9-edit-hint {
+  margin: 8px 0 0;
+}
+
+.w9-debug {
+  margin: 18px 0 0;
+  max-width: 460px;
+  font-size: 0.82rem;
+  color: #999;
+}
+
+.w9-debug summary {
+  cursor: pointer;
+}
+
+.w9-debug pre {
+  margin: 10px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+  background: #f7f7f9;
+  border: 1px solid #000;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #444;
+}
+
+/* ---------- Action panel ---------- */
+.action-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 34px;
+  padding: 48px 72px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* ---------- Wizard: one step's screen visible at a time ---------- */
+.wizard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 420px;
+}
+
+.wizard-loading {
+  /* Fixed (not absolute-within-#wizard) so it can't scroll away with the
+     step content it's covering — #wizard is a normal, content-sized child
+     of the scrollable .action-panel, so an overlay pinned to #wizard's own
+     box would scroll out from under itself once the panel is scrolled.
+     script.js sets top/left/width/height inline to match .action-panel's
+     current on-screen rect every time this is shown. */
+  position: fixed;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: #fff;
+}
+
+.wizard-loading[hidden] {
+  display: none;
+}
+
+/* Exact video file-stacking loader — class names prefixed with "loader-"
+   since plain names like .stage/.file-card/.line would collide with the
+   page's own layout classes (.stage is the main two-column grid). */
+.loader-stage {
+  position: relative;
+  width: 220px;
+  height: 180px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  perspective: 1000px;
+}
+
+.loader-ground-shadow {
+  position: absolute;
+  bottom: 15px;
+  width: 140px;
+  height: 70px;
+  background: rgba(15, 23, 42, 0.1);
+  border-radius: 50%;
+  transform: rotateX(60deg) rotateZ(-35deg);
+  filter: blur(10px);
+  animation: loaderShadowPulse 3.5s infinite ease-in-out;
+}
+
+@keyframes loaderShadowPulse {
+  0%, 100% { transform: rotateX(60deg) rotateZ(-35deg) scale(0.85); opacity: 0.4; }
+  50% { transform: rotateX(60deg) rotateZ(-35deg) scale(1.1); opacity: 0.7; }
+}
+
+.loader-file-card {
+  position: absolute;
+  width: 110px;
+  height: 130px;
+  background: #ffffff;
+  border: 1.5px solid #94a3b8;
+  border-radius: 8px;
+  box-shadow:
+    -2px 2px 0px #cbd5e1,
+    -6px 8px 15px rgba(0, 0, 0, 0.08);
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transform-style: preserve-3d;
+  opacity: 0;
+  animation: loaderDropAndStack 3.5s infinite cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+
+.loader-file-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 18px 18px 0;
+  border-color: transparent #e2e8f0 transparent transparent;
+  box-shadow: -1px 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.loader-line {
+  height: 4px;
+  border-radius: 2px;
+  background-color: #e2e8f0;
+}
+.loader-line.accent { background-color: #3b82f6; width: 40%; }
+.loader-line.full { width: 100%; }
+.loader-line.medium { width: 70%; }
+
+.loader-file-card:nth-child(2) {
+  animation-delay: 0s;
+  --stack-y: 0px;
+  --rot-z: -32deg;
+}
+
+.loader-file-card:nth-child(3) {
+  animation-delay: 0.6s;
+  --stack-y: -12px;
+  --rot-z: -30deg;
+}
+
+.loader-file-card:nth-child(4) {
+  animation-delay: 1.2s;
+  --stack-y: -24px;
+  --rot-z: -34deg;
+}
+
+.loader-file-card:nth-child(5) {
+  animation-delay: 1.8s;
+  --stack-y: -36px;
+  --rot-z: -31deg;
+}
+
+@keyframes loaderDropAndStack {
+  0% {
+    opacity: 0;
+    transform: translateY(-180px) rotateX(58deg) rotateZ(var(--rot-z)) scale(0.85);
+  }
+  18% {
+    opacity: 1;
+  }
+  38%, 82% {
+    opacity: 1;
+    transform: translateY(var(--stack-y)) rotateX(58deg) rotateZ(var(--rot-z)) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(var(--stack-y)) rotateX(58deg) rotateZ(var(--rot-z)) scale(1);
+  }
+}
+
+.wizard-loading p {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: hsl(261deg 80% 40%);
+}
+
+.wizard-step {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  padding: 32px 0 24px;
+}
+
+.wizard-step h2 {
+  margin: 0 0 18px;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.manual-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 16px 0 0;
+  max-width: 380px;
+}
+
+.manual-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #666;
+}
+
+.manual-fields input {
+  padding: 10px 14px;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: #1a1a1a;
+}
+
+/* Start Date: a plain text input (so "August 5th, 2026 (Tentative)"-style
+   text still works) with a calendar-icon button that opens a native date
+   picker and formats the picked date back into that same text field. */
+.date-field {
+  position: relative;
+  display: flex;
+}
+
+.date-field input[type="text"] {
+  width: 100%;
+  padding-right: 40px;
+}
+
+.date-field-trigger {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.date-field-trigger:hover {
+  background: #f2f2f2;
+}
+
+/* The real date input is never shown — it only exists so its native
+   picker UI can be invoked and read from via JS. */
+.date-field-native {
+  position: absolute;
+  inset: 0;
+  right: 28px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.manual-fields input:focus {
+  outline: none;
+  border-color: hsl(261deg 80% 48%);
+  box-shadow: 0 0 0 3px hsl(261deg 85% 92%);
+}
+
+/* Billing Rate: the "$" and "/hr" are fixed, non-editable text either side
+   of a number-only input — the user only ever types the number, and the
+   dollar sign / per-hour unit can't be mistyped or omitted. */
+.billing-rate-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.billing-rate-affix {
+  color: #666;
+  font-size: 0.95rem;
+  font-weight: 600;
+  flex-shrink: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.billing-rate-field input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  padding: 10px 0;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.billing-rate-field input[type="number"]::-webkit-outer-spin-button,
+.billing-rate-field input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.billing-rate-field input:focus {
+  border: none;
+  box-shadow: none;
+}
+
+.billing-rate-field:focus-within {
+  border-color: hsl(261deg 80% 48%);
+  box-shadow: 0 0 0 3px hsl(261deg 85% 92%);
+}
+
+.billing-rate-field:has(input.field-error) {
+  border-color: #d13c3c;
+  box-shadow: 0 0 0 3px rgba(209, 60, 60, 0.15);
+}
+
+.step1-extract-btn {
+  align-self: flex-start;
+  margin: 20px 0 32px;
+}
+
+.wizard-step.active {
+  display: flex;
+}
+
+.wizard-nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 20px;
+}
+
+.wizard-step[data-step="2"] .wizard-nav,
+.wizard-step[data-step="3"] .wizard-nav {
+  justify-content: space-between;
+}
+
+.wizard-nav .btn {
+  padding: 12px 26px;
+  font-size: 13px;
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: #666;
+  border-color: #ccc;
+}
+
+.btn-secondary:hover {
+  background-color: #f2f2f2;
+  color: #1a1a1a;
+  box-shadow: none;
+}
+
+/* Replay the entrance rise each time a wizard step becomes active */
+.wizard-step.active {
+  animation: rise 0.4s ease both;
+}
+
+.step-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #aaa;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hint {
+  margin: 16px 0 0;
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.upload-block {
+  border-radius: 14px;
+  transition: background-color 0.25s ease;
+}
+
+/* Dragging a file over the drop zone actually gives visible feedback now,
+   instead of the class toggling with nothing styled for it to show */
+.upload-block.drag-over {
+  background-color: hsl(261deg 85% 97%);
+}
+.upload-block.drag-over .btn {
+  border-color: hsl(261deg 80% 48%);
+  box-shadow: 0 0 0 4px hsl(261deg 85% 92%);
+}
+
+.file-list {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-list li {
+  font-size: 0.85rem;
+  background: #f7f7f9;
+  border: 1px solid #000;
+  border-radius: 10px;
+  padding: 8px 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  animation: fileRowIn 0.3s ease both;
+}
+
+@keyframes fileRowIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.file-list li span.size { color: #999; }
+
+/* ---------- Buttons (Uiverse.io by barisdogansutcu, extended) ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 17px 40px;
+  border-radius: 50px;
+  cursor: pointer;
+  border: 1px solid #000;
+  background-color: white;
+  box-shadow: rgb(0 0 0 / 5%) 0 0 8px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-size: 15px;
+  color: #1a1a1a;
+  transition: all 0.5s ease;
+}
+
+.btn:hover {
+  letter-spacing: 3px;
+  background-color: hsl(261deg 80% 48%);
+  color: hsl(0, 0%, 100%);
+  box-shadow: rgb(93 24 220) 0px 7px 29px 0px;
+}
+
+.btn:active {
+  letter-spacing: 3px;
+  background-color: hsl(261deg 80% 48%);
+  color: hsl(0, 0%, 100%);
+  box-shadow: rgb(93 24 220) 0px 0px 0px 0px;
+  transform: translateY(10px);
+  transition: 100ms;
+}
+
+.btn:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.download-options {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.btn-download:hover {
+  background-color: hsl(160deg 70% 40%);
+  box-shadow: rgb(16 150 90) 0px 7px 29px 0px;
+}
+
+.btn-download:active {
+  background-color: hsl(160deg 70% 40%);
+  box-shadow: rgb(16 150 90) 0px 0px 0px 0px;
+}
+
+.btn-spinner {
+  width: 0;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.15);
+  border-top-color: currentColor;
+  opacity: 0;
+  transition: width 0.3s ease, opacity 0.3s ease;
+}
+
+#generateBtn.is-loading .btn-spinner {
+  width: 15px;
+  opacity: 1;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 900px) {
+  .stage { grid-template-columns: 1fr; }
+  .hero {
+    border-right: none;
+    border-bottom: 1px solid #000;
+    padding: 60px 32px 40px;
+  }
+  .action-panel { padding: 40px 32px 60px; }
+}
+
+@media (max-width: 560px) {
+  .topnav { padding: 18px 24px; }
+  .nav-links { display: none; }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "document-generator-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright end-to-end regression check for the Document Generator wizard",
+  "scripts": {
+    "test": "node e2e.js"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}
