@@ -134,24 +134,21 @@ export const loginRequest = {
 };
 
 // ---------------------------------------------------------------------------
-// Domain allow-list: only accounts whose email/UPN ends in this domain may
-// use this app after Microsoft sign-in succeeds. Enforced in auth.js
-// (isEmailAllowed), which reads the signed-in account's email/UPN straight
-// off its ID token claims — no extra API call needed since no Graph scope
-// is requested above.
+// No allow-list of any kind lives in this file, or anywhere else in this
+// frontend. That list used to be a hardcoded array of 5 email addresses
+// here — removed deliberately, because anything present in code that ships
+// to the browser can always be read via "View Source"/devtools, no matter
+// how it's stored (hardcoded, in a fetched JSON file, Base64-encoded,
+// whatever). There is no way to make client-side JavaScript keep a secret
+// from the browser running it.
 //
-// This is an APP-level check, not an Entra-level one: Entra will still let
-// anyone in the tenant complete sign-in, and this app then signs out +
-// blocks anyone outside the domain. For a stronger, Entra-enforced version
-// of the same restriction (so a non-matching user can't even complete
-// sign-in), go to the Entra admin center → Enterprise applications → this
-// app → "Properties" → set "Assignment required?" to Yes, and assign only
-// the intended users/group. See AUTH.md Section E.
+// Who may sign in is instead enforced entirely by Entra ID itself, outside
+// this codebase: Entra admin center → Enterprise applications → this app
+// → Properties → "Assignment required?" = Yes, then assign exactly the
+// intended users under "Users and groups". Entra refuses sign-in for
+// anyone not assigned *before* it ever hands a token back to this app —
+// the actual list of who's allowed lives only in the Entra admin portal,
+// visible only to whoever has admin access there. See AUTH.md, Section A
+// (setup steps) and Section E (why this is the only way to truly keep this
+// list out of the frontend).
 // ---------------------------------------------------------------------------
-export const ALLOWED_EMAIL_DOMAIN = "mysbscorp.com";
-
-export function isAllowedEmail(email) {
-  if (!email) return false;
-  const domain = email.split("@")[1]?.toLowerCase();
-  return domain === ALLOWED_EMAIL_DOMAIN;
-}

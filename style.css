@@ -33,7 +33,6 @@
 
 #authGate[data-state="loading"] [data-auth-panel="loading"],
 #authGate[data-state="unauthenticated"] [data-auth-panel="unauthenticated"],
-#authGate[data-state="blocked"] [data-auth-panel="blocked"],
 #authGate[data-state="error"] [data-auth-panel="error"] {
   display: flex;
 }
@@ -72,6 +71,61 @@
   width: 16px;
   height: 16px;
   flex: none;
+}
+
+/* =====================================================================
+   Blocked-sign-in pop-up — a real modal (dimmed backdrop + bordered
+   dialog card), deliberately distinct from #authGate's flat screens,
+   since this is an interrupting warning rather than a normal app state.
+   z-index above #authGate (10000) so it always appears on top of it.
+   ===================================================================== */
+
+.auth-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 15, 10, 0.45);
+  padding: 24px;
+}
+
+.auth-modal-overlay[hidden] { display: none; }
+
+.auth-modal {
+  width: 100%;
+  max-width: 360px;
+  background: #fff;
+  border: 1px solid #000;
+  border-radius: 16px;
+  box-shadow: rgb(0 0 0 / 25%) 0 20px 50px;
+  padding: 32px 28px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  animation: authModalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes authModalIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.auth-modal-icon { width: 34px; height: 34px; }
+
+.auth-modal h2 {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+}
+
+.auth-modal .btn {
+  margin-top: 6px;
+  padding: 13px 32px;
 }
 
 /* ---------- Nav user badge ---------- */

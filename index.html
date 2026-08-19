@@ -30,9 +30,11 @@
 <body>
 
   <!-- Blocks all app content (including the intro animation) until MSAL
-       confirms an authenticated, allow-listed Entra ID session. See
-       auth-ui.js. Flat full-bleed layout — deliberately not a boxed
-       card — matching the rest of the site's .hero typography. -->
+       confirms an authenticated Entra ID session. See auth-ui.js. Who's
+       allowed to sign in at all is enforced entirely by Entra itself
+       (authConfig.js/auth.js), not by any list in this frontend. Flat
+       full-bleed layout — deliberately not a boxed card — matching the
+       rest of the site's .hero typography. -->
   <div id="authGate" data-state="loading">
     <p class="eyebrow">Document Generator</p>
 
@@ -43,7 +45,7 @@
 
     <div class="auth-panel" data-auth-panel="unauthenticated">
       <h1>Sign in to continue</h1>
-      <p class="auth-message">Use your Microsoft work or school account to access this app.</p>
+      <p class="auth-message">Sign in with an authorized Microsoft account.</p>
       <button type="button" class="btn btn-ms" id="loginBtn">
         <svg class="ms-logo" viewBox="0 0 21 21" aria-hidden="true" focusable="false">
           <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
@@ -55,13 +57,6 @@
       </button>
     </div>
 
-    <div class="auth-panel" data-auth-panel="blocked">
-      <h1>Access restricted</h1>
-      <p class="auth-message auth-error" id="authBlockedMessage">This account isn't authorized to use this application.</p>
-      <p class="auth-message">Sign in with an approved account, or contact an administrator if you believe this is a mistake.</p>
-      <button type="button" class="btn" id="authSwitchAccountBtn">Use a different account</button>
-    </div>
-
     <div class="auth-panel" data-auth-panel="error">
       <h1>Sign-in failed</h1>
       <p class="auth-message auth-error" id="authErrorMessage">Please try again.</p>
@@ -69,7 +64,38 @@
     </div>
   </div>
 
-  <div id="introOverlay">
+  <!-- Pop-up warning shown over the sign-in screen if Entra itself refuses
+       a sign-in and happens to redirect back here with an error attached
+       (see auth.js's AccessDeniedError comment — who's allowed to sign in
+       is decided entirely by Entra's own "Assignment required" setting,
+       not by anything in this file or the rest of this frontend). Sits
+       above #authGate's own z-index; "Retry" just dismisses this and
+       leaves the sign-in screen underneath, it does not re-trigger sign-in. -->
+  <div id="authBlockedModal" class="auth-modal-overlay" hidden role="alertdialog" aria-labelledby="authBlockedTitle">
+    <div class="auth-modal">
+      <svg class="auth-modal-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3 L21.5 20 H2.5 Z" fill="none" stroke="#b02a2a" stroke-width="1.5" stroke-linejoin="round"/>
+        <line x1="12" y1="9.5" x2="12" y2="14.5" stroke="#b02a2a" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="12" cy="17.3" r="0.9" fill="#b02a2a"/>
+      </svg>
+      <h2 id="authBlockedTitle">Sign-in blocked</h2>
+      <p class="auth-message auth-error" id="authBlockedMessage">This account isn't authorized to use this application.</p>
+      <p class="auth-message">Contact an administrator if you believe this is a mistake.</p>
+      <button type="button" class="btn" id="authBlockedRetryBtn">Retry</button>
+    </div>
+  </div>
+
+  <!-- inert by default (removed by auth-ui.js#showAuthenticated only once
+       sign-in succeeds): #authGate blocking this content is a paint-order
+       CSS overlay, not a DOM-level one — z-index/opacity don't affect
+       focusability, tab order, or whether a bound click/keydown handler
+       fires. Without `inert`, a keyboard user (Tab+Enter) or any
+       script/automation driving focus+key events could reach and operate
+       nav links / wizard controls underneath the overlay without ever
+       completing sign-in. `inert` removes an element and its descendants
+       from the tab order and from receiving focus or pointer/keyboard
+       activation entirely, regardless of how it's painted. -->
+  <div id="introOverlay" inert>
     <div class="intro-stage">
       <div class="intro-floor"></div>
       <div class="elevator-frame" id="elevator">
@@ -116,7 +142,12 @@
     </div>
   </div>
 
-  <nav class="topnav">
+  <!-- inert by default — see #introOverlay's comment above. Confirmed
+       exploit this closes: without it, Tab reaches #navHistoryLink /
+       #navGeneratorLink behind the opaque #authGate overlay and Enter
+       fires script.js's click handlers, revealing locally-stored document
+       history with no sign-in at all. -->
+  <nav class="topnav" inert>
     <span class="brand">Document Generator</span>
     <div class="nav-links">
       <a href="#" class="nav-link active" id="navGeneratorLink">Generator</a>
@@ -142,7 +173,7 @@
     </div>
   </nav>
 
-  <section class="history-view" id="historyView" hidden>
+  <section class="history-view" id="historyView" hidden inert>
     <div class="history-header">
       <p class="eyebrow">Saved locally</p>
       <h1>History</h1>
@@ -151,7 +182,8 @@
     <div class="history-list" id="historyList"></div>
   </section>
 
-  <main class="stage" id="mainStage">
+  <!-- inert by default — see #introOverlay's comment above. -->
+  <main class="stage" id="mainStage" inert>
     <section class="hero">
       <p class="eyebrow">MSA Automation</p>
       <h1>Document<br>Generator</h1>

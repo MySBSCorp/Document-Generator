@@ -8,32 +8,63 @@
 // login()/logout() use MSAL's redirect flow (see auth.js), so a click on
 // #loginBtn/#logoutBtn navigates this whole page away — there is no
 // "then show the authenticated UI" step to run here for those. The account
-// (or an UnauthorizedEmailError) shows up in restoreSession() on the next
+// (or an AccessDeniedError) shows up in restoreSession() on the next
 // page load instead, once the browser lands back here.
 // ---------------------------------------------------------------------------
-import { restoreSession, login, logout, getAccountEmail, UnauthorizedEmailError } from "./auth.js";
+import { restoreSession, login, logout, getAccountEmail, AccessDeniedError } from "./auth.js";
 import { msalConfigured } from "./authConfig.js";
 
 const authGate = document.getElementById("authGate");
 const loginBtn = document.getElementById("loginBtn");
 const authRetryBtn = document.getElementById("authRetryBtn");
 const authErrorMessage = document.getElementById("authErrorMessage");
-const authBlockedMessage = document.getElementById("authBlockedMessage");
-const authSwitchAccountBtn = document.getElementById("authSwitchAccountBtn");
 const authUser = document.getElementById("authUser");
 const authAvatar = document.getElementById("authAvatar");
 const authUserName = document.getElementById("authUserName");
 const authUserEmail = document.getElementById("authUserEmail");
 const logoutBtn = document.getElementById("logoutBtn");
 
+const authBlockedModal = document.getElementById("authBlockedModal");
+const authBlockedMessage = document.getElementById("authBlockedMessage");
+const authBlockedRetryBtn = document.getElementById("authBlockedRetryBtn");
+
+// #authGate visually covers these with a higher z-index, but z-index/paint
+// order has no effect on focusability or on whether a bound click/keydown
+// handler fires — only `inert` (or `hidden`/`disabled`/removal from the
+// DOM) actually stops keyboard/programmatic activation. Security review
+// confirmed that without this, Tab could reach the nav's History/Generator
+// links behind the overlay and open locally-stored document history with
+// no sign-in at all. These start `inert` in the HTML; toggled here so
+// authenticated users get the normal, fully-interactive app.
+const introOverlay = document.getElementById("introOverlay");
+const topnav = document.querySelector(".topnav");
+const mainStage = document.getElementById("mainStage");
+const historyView = document.getElementById("historyView");
+const inertElements = [introOverlay, topnav, mainStage, historyView].filter(Boolean);
+
+function setAppInert(isInert) {
+  for (const el of inertElements) {
+    el.inert = isInert;
+  }
+}
+
 function setGateState(state, message) {
   authGate.dataset.state = state;
   if (state === "error") {
     authErrorMessage.textContent = message || "Please try again.";
   }
-  if (state === "blocked") {
-    authBlockedMessage.textContent = message || "This account isn't authorized to use this application.";
-  }
+}
+
+// Pop-up warning shown over the sign-in screen for a disallowed account.
+// The sign-in screen underneath is untouched — "Retry" just dismisses this
+// and leaves it visible, it does not re-trigger sign-in on its own.
+function showBlockedModal(message) {
+  authBlockedMessage.textContent = message || "This account isn't authorized to use this application.";
+  authBlockedModal.hidden = false;
+}
+
+function hideBlockedModal() {
+  authBlockedModal.hidden = true;
 }
 
 // First letter of up to the first two words (e.g. "Jane Doe" -> "JD"),
@@ -47,6 +78,7 @@ function initialsFor(name) {
 
 function showAuthenticated(account) {
   authGate.classList.add("is-hidden");
+  setAppInert(false);
   const displayName = account?.name || "Signed in";
   authUserName.textContent = displayName;
   authUserEmail.textContent = getAccountEmail(account) || "";
@@ -56,6 +88,7 @@ function showAuthenticated(account) {
 
 function showUnauthenticated() {
   authUser.hidden = true;
+  setAppInert(true);
   authGate.classList.remove("is-hidden");
   setGateState("unauthenticated");
 }
@@ -79,12 +112,13 @@ async function init() {
       showUnauthenticated();
     }
   } catch (error) {
-    if (error instanceof UnauthorizedEmailError) {
-      // A sign-in redirect just landed back here with an account outside
-      // the allowed domain. Distinct from a generic failure.
-      authUser.hidden = true;
-      authGate.classList.remove("is-hidden");
-      setGateState("blocked", `"${error.email}" isn't authorized to use this application.`);
+    if (error instanceof AccessDeniedError) {
+      // Entra itself refused this sign-in (see auth.js's AccessDeniedError
+      // comment — enforced via Entra's "Assignment required" setting, not
+      // any list in this codebase). Show the normal sign-in screen
+      // underneath, with the warning pop-up over it.
+      showUnauthenticated();
+      showBlockedModal(error.message);
       return;
     }
     console.error("[auth] session restore failed:", error);
@@ -112,13 +146,12 @@ loginBtn.addEventListener("click", async () => {
   loginBtn.disabled = false;
 });
 
-authSwitchAccountBtn.addEventListener("click", async () => {
-  authSwitchAccountBtn.disabled = true;
-  // Force Entra's account chooser instead of silently retrying whatever
-  // Microsoft session the browser still has (which would just get blocked
-  // again immediately for the same reason).
-  await attemptLogin({ prompt: "select_account" });
-  authSwitchAccountBtn.disabled = false;
+authBlockedRetryBtn.addEventListener("click", () => {
+  // Just dismiss the pop-up back to the ordinary sign-in screen — this
+  // does not itself retry sign-in. The user clicks "Sign in with
+  // Microsoft" again from there (Entra's own credential prompt, forced by
+  // loginRequest.prompt: "login", is where they'd pick a different account).
+  hideBlockedModal();
 });
 
 authRetryBtn.addEventListener("click", () => {
