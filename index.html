@@ -3,38 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<!-- Defense-in-depth: even though uploaded filenames are now rendered via
-     textContent (not innerHTML), this CSP blocks inline/injected scripts and
-     any script/connection host beyond the one CDN this app actually uses, so
-     a future XSS bug or a compromised third-party script can't exfiltrate
-     the SSN/EIN data this app processes. cdn.jsdelivr.net is no longer
-     needed anywhere — pizzip/docx/pako and tesseract.js's own worker/WASM
-     core/language data are all vendored locally under vendor/ (see
-     vendor/README.md). Only cdnjs.cloudflare.com remains, for the three
-     SRI-verified <script> tags below. -->
-<!-- connect-src addition: MSAL's silent-renewal (acquireTokenSilent) does a
-     fetch/XHR call to Entra's token endpoint after the interactive
-     loginRedirect()/logoutRedirect() flow lands back on this page (see
-     auth.js / authConfig.js) — sign-in/out themselves are full top-level
-     navigations, not fetch calls, so they aren't what connect-src governs
-     here. No Microsoft Graph (or any other API) host is listed — this app
-     only requests openid/profile/email scopes and reads identity off the
-     ID token's own claims, so it never acquires or sends a Graph access
-     token. frame-src: MSAL opens a hidden iframe against Entra's authorize
-     endpoint for silent SSO checks (also part of acquireTokenSilent). -->
-
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com; worker-src 'self' blob:; connect-src 'self' https://cdnjs.cloudflare.com https://login.microsoftonline.com; frame-src https://login.microsoftonline.com; img-src 'self' data: blob:; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://login.microsoftonline.com; frame-src https://login.microsoftonline.com blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Document Generator</title>
-<link rel="stylesheet" href="style.css?v=20260813-8">
+<link rel="stylesheet" href="style.css?v=20260824-17">
 </head>
 <body>
 
-  <!-- Blocks all app content (including the intro animation) until MSAL
-       confirms an authenticated Entra ID session. See auth-ui.js. Who's
-       allowed to sign in at all is enforced entirely by Entra itself
-       (authConfig.js/auth.js), not by any list in this frontend. Flat
-       full-bleed layout — deliberately not a boxed card — matching the
-       rest of the site's .hero typography. -->
   <div id="authGate" data-state="loading">
     <p class="eyebrow">Document Generator</p>
 
@@ -64,13 +38,6 @@
     </div>
   </div>
 
-  <!-- Pop-up warning shown over the sign-in screen if Entra itself refuses
-       a sign-in and happens to redirect back here with an error attached
-       (see auth.js's AccessDeniedError comment — who's allowed to sign in
-       is decided entirely by Entra's own "Assignment required" setting,
-       not by anything in this file or the rest of this frontend). Sits
-       above #authGate's own z-index; "Retry" just dismisses this and
-       leaves the sign-in screen underneath, it does not re-trigger sign-in. -->
   <div id="authBlockedModal" class="auth-modal-overlay" hidden role="alertdialog" aria-labelledby="authBlockedTitle">
     <div class="auth-modal">
       <svg class="auth-modal-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -85,16 +52,17 @@
     </div>
   </div>
 
-  <!-- inert by default (removed by auth-ui.js#showAuthenticated only once
-       sign-in succeeds): #authGate blocking this content is a paint-order
-       CSS overlay, not a DOM-level one — z-index/opacity don't affect
-       focusability, tab order, or whether a bound click/keydown handler
-       fires. Without `inert`, a keyboard user (Tab+Enter) or any
-       script/automation driving focus+key events could reach and operate
-       nav links / wizard controls underneath the overlay without ever
-       completing sign-in. `inert` removes an element and its descendants
-       from the tab order and from receiving focus or pointer/keyboard
-       activation entirely, regardless of how it's painted. -->
+  <div id="authLogoutConfirmModal" class="auth-modal-overlay" hidden role="alertdialog" aria-labelledby="authLogoutConfirmTitle">
+    <div class="auth-modal">
+      <h2 id="authLogoutConfirmTitle">Sign out?</h2>
+      <p class="auth-message">You'll be signed out and returned to the login page.</p>
+      <div class="auth-modal-actions">
+        <button type="button" class="btn btn-secondary" id="authLogoutCancelBtn">No, stay signed in</button>
+        <button type="button" class="btn" id="authLogoutConfirmBtn">Yes, sign out</button>
+      </div>
+    </div>
+  </div>
+
   <div id="introOverlay" inert>
     <div class="intro-stage">
       <div class="intro-floor"></div>
@@ -142,21 +110,12 @@
     </div>
   </div>
 
-  <!-- inert by default — see #introOverlay's comment above. Confirmed
-       exploit this closes: without it, Tab reaches #navHistoryLink /
-       #navGeneratorLink behind the opaque #authGate overlay and Enter
-       fires script.js's click handlers, revealing locally-stored document
-       history with no sign-in at all. -->
   <nav class="topnav" inert>
     <span class="brand">Document Generator</span>
     <div class="nav-links">
       <a href="#" class="nav-link active" id="navGeneratorLink">Generator</a>
       <a href="#" class="nav-link" id="navHistoryLink">History</a>
     </div>
-    <!-- Populated from the account's own name/ID-token claims only after
-         sign-in succeeds (see auth-ui.js) — no Graph or other API call.
-         Text content is set via textContent, never innerHTML, so a display
-         name or claim value containing markup can't inject HTML. -->
     <div class="auth-user" id="authUser" hidden>
       <span class="auth-avatar" id="authAvatar" aria-hidden="true"></span>
       <span class="auth-user-text">
@@ -182,7 +141,6 @@
     <div class="history-list" id="historyList"></div>
   </section>
 
-  <!-- inert by default — see #introOverlay's comment above. -->
   <main class="stage" id="mainStage" inert>
     <section class="hero">
       <p class="eyebrow">MSA Automation</p>
@@ -190,6 +148,10 @@
       <p class="subtitle">Upload a W-9 and generate a Master Service Agreement in one click.</p>
       <p class="status" id="status" role="status"></p>
 
+      <div class="w9-review-alert" id="w9EditHint" role="alert" hidden>
+        <span class="w9-review-alert-icon" aria-hidden="true">⚠</span>
+        <span>Please check these details carefully — automated extraction isn't perfect. If anything is wrong, correct it manually in the fields below before continuing.</span>
+      </div>
       <dl class="w9-summary" id="w9Summary" hidden>
         <div>
           <dt>Company / Business Name</dt>
@@ -210,7 +172,6 @@
           <dd><input type="text" id="w9Address" placeholder="—"></dd>
         </div>
       </dl>
-      <p class="hint w9-edit-hint" id="w9EditHint" hidden>You can correct any of these before continuing.</p>
 
       <details class="w9-debug" id="w9Debug" hidden>
         <summary>Raw extracted text (debug)</summary>
@@ -256,43 +217,22 @@
           <span class="step-label">Step 1</span>
           <h2>Upload files</h2>
           <div class="upload-block">
-            <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+            <input type="file" id="fileInput" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden>
             <label for="fileInput" class="btn">Upload W-9</label>
-            <p class="hint">Upload a W-9 PDF</p>
+            <p class="hint">Upload a W-9 PDF or a photo/scan (JPG, PNG)</p>
             <ul class="file-list" id="fileList"></ul>
           </div>
           <button type="button" class="btn btn-nav step1-extract-btn" id="extractDataBtn" disabled>Extract Data</button>
           <div class="wizard-nav">
-            <button type="button" class="btn btn-nav" id="step1NextBtn" disabled>Next</button>
+            <button type="button" class="btn btn-nav" id="step1NextBtn" disabled>
+              <span class="btn-label">Next</span>
+              <span class="btn-spinner" aria-hidden="true"></span>
+            </button>
           </div>
         </div>
 
         <div class="wizard-step" data-step="2">
           <span class="step-label">Step 2</span>
-          <h2>Upload MSA template</h2>
-          <div class="upload-block">
-            <input
-              type="file"
-              id="msaTemplateInput"
-              accept="application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              hidden
-            >
-            <label for="msaTemplateInput" class="btn">Upload MSA</label>
-            <p class="hint">Upload the MSA template (PDF or Word) to fill with the extracted data</p>
-            <ul class="file-list" id="msaFileList"></ul>
-          </div>
-          <button type="button" class="btn step1-extract-btn" id="generateBtn" disabled>
-            <span class="btn-label">Insert Data</span>
-            <span class="btn-spinner" aria-hidden="true"></span>
-          </button>
-          <div class="wizard-nav">
-            <button type="button" class="btn btn-secondary" id="step2BackBtn">Back</button>
-            <button type="button" class="btn btn-nav" id="step2NextBtn" disabled>Next</button>
-          </div>
-        </div>
-
-        <div class="wizard-step" data-step="3">
-          <span class="step-label">Step 3</span>
           <h2>Manual details</h2>
           <p class="hint">These aren't on the W-9, so enter them by hand.</p>
           <div class="manual-fields">
@@ -316,30 +256,76 @@
           </div>
           <button type="button" class="btn step1-extract-btn" id="applyManualBtn">Apply Details</button>
           <div class="wizard-nav">
-            <button type="button" class="btn btn-secondary" id="step3BackBtn">Back</button>
-            <button type="button" class="btn btn-nav" id="step3NextBtn" disabled>Next</button>
+            <button type="button" class="btn btn-secondary" id="step2BackBtn">Back</button>
           </div>
         </div>
 
-        <div class="wizard-step" data-step="4">
-          <span class="step-label">Step 4</span>
-          <h2>Download</h2>
-          <div class="download-options">
-            <button type="button" class="btn btn-download" id="downloadPdfBtn" disabled>Download as PDF</button>
-            <button type="button" class="btn btn-download" id="downloadWordBtn" disabled>Download as Word (.docx)</button>
+        <div class="wizard-step" data-step="3">
+          <div class="step3-header">
+            <button type="button" class="btn btn-nav btn-new-doc" id="startNewBtn">Generate New Document</button>
+            <span class="step-label">Step 3</span>
+          </div>
+          <div class="step3-body">
+            <h2>Download</h2>
+            <div class="download-options">
+              <button type="button" class="btn btn-download" id="downloadPdfBtn" disabled>Download as PDF</button>
+              <button type="button" class="btn btn-download" id="downloadWordBtn" disabled>Download as Word (.docx)</button>
+            </div>
           </div>
           <div class="wizard-nav">
-            <button type="button" class="btn btn-secondary" id="step4BackBtn">Back</button>
+            <button type="button" class="btn btn-secondary" id="step3BackBtn">Back</button>
           </div>
         </div>
       </div>
     </section>
-  </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js" integrity="sha512-kMjICPeuRYAQ5KvL0+s/ln7a+96IKohiAtfaXKg37aSLmzfP0nFweeaE7lDRN01XIjn0jUfYT5kSFM4XmcTThQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js" integrity="sha512-z8IYLHO8bTgFqj+yrPyIJnzBDf7DDhWwiEsk4sY+Oe6J2M+WQequeGS7qioI5vT6rXgVRb4K1UVQC5ER7MKzKQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script type="module" src="auth-ui.js?v=1"></script>
-<script type="module" src="script.js?v=20260813-16"></script>
+    <button type="button" class="preview-toggle" id="previewToggleBtn" aria-expanded="false" aria-controls="previewPanel">
+      <span class="preview-toggle-icon" id="previewToggleIcon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+          <path d="M14 3v5h5"/>
+          <path d="M9 13h6M9 16.5h6M9 9.5h2"/>
+        </svg>
+        <svg class="preview-toggle-icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+      </span>
+      <span class="preview-toggle-label" id="previewToggleLabel">Preview</span>
+    </button>
+
+    <aside class="preview-panel" id="previewPanel" aria-hidden="true">
+      <div class="preview-panel-header">
+        <div class="preview-panel-title">
+          <svg class="preview-panel-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+            <path d="M14 3v5h5"/>
+          </svg>
+          <h3>Document Preview</h3>
+        </div>
+        <div class="preview-zoom-controls" id="previewZoomControls" hidden>
+          <button type="button" class="preview-zoom-btn" id="previewZoomOutBtn" aria-label="Zoom out">&#8722;</button>
+          <span class="preview-zoom-level" id="previewZoomLevel">100%</span>
+          <button type="button" class="preview-zoom-btn" id="previewZoomInBtn" aria-label="Zoom in">&#43;</button>
+        </div>
+      </div>
+      <div class="preview-paper">
+        <div class="preview-empty-state" id="previewEmptyState">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+            <path d="M14 3v5h5"/>
+            <path d="M9 13h6M9 16.5h4"/>
+          </svg>
+          <p>Insert data into the MSA template to see a live document preview here.</p>
+        </div>
+        <div class="preview-loading" id="previewLoading" hidden>
+          <span class="preview-loading-spinner" aria-hidden="true"></span>
+          <span>Updating preview&hellip;</span>
+        </div>
+        <iframe class="preview-frame" id="previewFrame" title="MSA document preview" hidden></iframe>
+      </div>
+    </aside>
+  </main>
+<script type="module" src="auth-ui.js?v=2"></script>
+<script type="module" src="script.js?v=20260824-17"></script>
 </body>
 </html>

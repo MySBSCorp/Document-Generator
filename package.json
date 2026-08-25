@@ -1,0 +1,31 @@
+{
+  "name": "document-generator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "W-9 to MSA document generator with Entra ID sign-in, PDF/image OCR extraction, and PDF/Word generation.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node tests/e2e.js",
+    "test:extraction": "node tests/w9-extraction.test.js"
+  },
+  "dependencies": {
+    "@azure/msal-browser": "^4.30.0",
+    "@azure/msal-common": "^15.17.0",
+    "docx": "^8.5.0",
+    "docx-preview": "^0.4.0",
+    "html2canvas": "^1.4.1",
+    "pako": "^2.1.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^3.11.174",
+    "pizzip": "^3.2.0",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "playwright": "^1.62.1",
+    "vite": "^8.2.1"
+  }
+}

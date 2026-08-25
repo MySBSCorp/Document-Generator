@@ -1,19 +1,20 @@
 // Full end-to-end regression check for the wizard: upload a W-9, extract,
-// fill an MSA template, apply manual details, download, then verify the
-// History view. Requires the app to be served over HTTP (ES modules are
-// blocked under file://) — start it with `python -m http.server 8000` from
-// the Document-Generator directory before running this.
+// insert data into the bundled MSA template, apply manual details, download,
+// then verify the History view. Requires the app to be served over HTTP (ES
+// modules are blocked under file://) — start it with `python -m http.server
+// 8000` from the Document-Generator directory before running this.
 //
 // Usage: node tests/e2e.js
-// Edit W9_PATH / MSA_PATH below to point at real fixture files first.
+// Edit W9_PATH below to point at a real fixture file first.
 
-const { chromium } = require('playwright');
-const path = require('path');
+import { chromium } from 'playwright';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
-const BASE = 'http://localhost:8000/index.html';
+const BASE = 'http://localhost:5173/index.html';
 const W9_PATH = 'C:/Users/Lenovo/Downloads/W9 (1).pdf';
-const MSA_PATH = 'C:/Users/Lenovo/Downloads/MSA and PO - Aptiva Corp.docx';
 
 function visibleStep(page) {
   return page.evaluate(() => {
@@ -46,18 +47,14 @@ async function waitForStep(page, step, timeoutMs) {
   if (elevator) await elevator.click({ force: true });
   await page.waitForTimeout(1500);
 
-  console.log('=== Step 1: upload W-9, extract ===');
+  console.log('=== Step 1: upload W-9, extract, insert data into bundled MSA template ===');
   await page.setInputFiles('#fileInput', W9_PATH);
   await page.click('#extractDataBtn');
-  console.log('  reached step 2:', await waitForStep(page, '2', 90000));
+  await page.waitForFunction(() => !document.getElementById('step1NextBtn').disabled, { timeout: 90000 });
+  await page.click('#step1NextBtn');
+  console.log('  reached step 2:', await waitForStep(page, '2', 30000));
 
-  console.log('=== Step 2: upload MSA template, insert data ===');
-  await page.setInputFiles('#msaTemplateInput', MSA_PATH);
-  await page.waitForTimeout(300);
-  await page.click('#generateBtn');
-  console.log('  reached step 3:', await waitForStep(page, '3', 30000));
-
-  console.log('=== Step 3: manual details ===');
+  console.log('=== Step 2: manual details ===');
   await page.fill('#manualRep', 'Jordan Smith');
   await page.fill('#manualRole', 'Senior Consultant');
   await page.fill('#manualLocation', 'Remote - San Francisco, CA');
@@ -68,10 +65,10 @@ async function waitForStep(page, step, timeoutMs) {
   });
   await page.fill('#manualBillingRate', '125');
   await page.click('#applyManualBtn');
-  console.log('  reached step 4:', await waitForStep(page, '4', 15000));
+  console.log('  reached step 3:', await waitForStep(page, '3', 15000));
   await page.waitForTimeout(500); // let saveToHistory finish
 
-  console.log('=== Step 4: downloads ===');
+  console.log('=== Step 3: downloads ===');
   const [pdfDownload] = await Promise.all([
     page.waitForEvent('download', { timeout: 15000 }),
     page.click('#downloadPdfBtn'),

@@ -1,11 +1,5 @@
 * { box-sizing: border-box; }
 
-/* =====================================================================
-   Auth gate — blocks the app (including the intro animation beneath it)
-   until MSAL confirms a signed-in Entra ID account. z-index above
-   #introOverlay's 9999 so no protected UI is reachable pre-auth.
-   ===================================================================== */
-
 #authGate {
   position: fixed;
   inset: 0;
@@ -73,13 +67,6 @@
   flex: none;
 }
 
-/* =====================================================================
-   Blocked-sign-in pop-up — a real modal (dimmed backdrop + bordered
-   dialog card), deliberately distinct from #authGate's flat screens,
-   since this is an interrupting warning rather than a normal app state.
-   z-index above #authGate (10000) so it always appears on top of it.
-   ===================================================================== */
-
 .auth-modal-overlay {
   position: fixed;
   inset: 0;
@@ -128,7 +115,17 @@
   padding: 13px 32px;
 }
 
-/* ---------- Nav user badge ---------- */
+.auth-modal-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.auth-modal-actions .btn {
+  margin-top: 0;
+  padding: 13px 20px;
+}
+
 .auth-user {
   display: flex;
   align-items: center;
@@ -194,11 +191,6 @@
   .auth-user-text { display: none; }
 }
 
-/* =====================================================================
-   Intro animation overlay — plays once on load, then hands off to the
-   real page and points the user at the Generate MSA button.
-   ===================================================================== */
-
 #introOverlay {
   position: fixed;
   inset: 0;
@@ -210,10 +202,6 @@
   transition: background 0.7s ease;
 }
 
-/* The backdrop fades to transparent (revealing the real page) while the button is
-   still flying to its real position — content isn't hidden via opacity/visibility
-   here, since that would also hide the traveling button. Final cleanup removes the
-   whole overlay from the DOM once the fly animation finishes (see script.js). */
 #introOverlay.is-hidden {
   background: transparent;
   pointer-events: none;
@@ -231,9 +219,6 @@
     animation: sceneIn 0.8s ease-out forwards;
 }
 
-/* Grounding line the man walks on and the lift sits on — positioned to match
-   both of their bases exactly (measured, not guessed), fading at the edges
-   so it reads as a floor rather than a hard rule across the scene. */
 #introOverlay .intro-floor {
     position: absolute;
     left: 40px;
@@ -245,30 +230,15 @@
     transition: opacity 0.3s ease;
 }
 
-/* Only the overlay's background fades on hand-off (so the traveling button
-   stays visible) — everything else left over in the scene, like this floor
-   line, has to fade itself out in step, or it lingers visibly on top of the
-   real page until the overlay node is finally removed a second-plus later. */
 #introOverlay.is-hidden .intro-floor {
     opacity: 0;
 }
 
-/* Opacity only (no transform) — a transform here would make this element the
-   containing block for the button's position:fixed fly-away, breaking its
-   viewport-relative coordinates. */
 @keyframes sceneIn {
     0% { opacity: 0; }
     100% { opacity: 1; }
 }
 
-/* --- Elevator (Lift) Container ---
-   This outer element is now a pure positioning/sizing box (left/width/height,
-   morph transition) with NO overflow-hidden, so the indicator light — which
-   sits just above it at a negative offset — never gets clipped. All the visual
-   styling (gradient, border, door-clipping) lives on the inner .lift-cab instead.
-   z-index sits above the man (5) by default so closed doors actually hide him;
-   while doors-open is present it drops below him so he's visible walking into
-   the open doorway instead of vanishing behind the (still-open) frame. */
 #introOverlay .elevator-frame {
     position: absolute;
     left: 230px;
@@ -289,9 +259,6 @@
     cursor: pointer;
 }
 
-/* Indicator light above the doors — glows green while they're open, dims red
-   the rest of the time, and fades away once the lift has become the button.
-   A sibling of .lift-cab (not a child), so the cab's overflow:hidden can't clip it. */
 #introOverlay .lift-indicator {
     position: absolute;
     top: -20px;
@@ -324,9 +291,6 @@
     opacity: 0;
 }
 
-/* The visual cab: gradient + inset shadow give it real depth instead of a flat
-   grey box. Fills the outer frame exactly (inset:0) so it always matches its
-   current size, whether that's the tall lift shape or the morphed pill button. */
 #introOverlay .lift-cab {
     position: absolute;
     inset: 0;
@@ -355,7 +319,6 @@
     z-index: 1;
 }
 
-/* A warm "ding" glow the instant the doors finish opening */
 #introOverlay .lift-cab::after {
     content: "";
     position: absolute;
@@ -373,7 +336,6 @@
     100% { opacity: 0; }
 }
 
-/* Morphing into Button State */
 #introOverlay .elevator-frame.morphed-button .lift-cab {
     border-radius: 30px;
     background: #ffffff;
@@ -385,7 +347,6 @@
     opacity: 0;
 }
 
-/* Elevator Doors — brushed-metal gradient with a bright seam where they meet and a small handle */
 #introOverlay .door {
     position: absolute;
     top: 0;
@@ -410,7 +371,7 @@
 #introOverlay .door-left {
     left: 0;
     border-right: 1px solid rgba(255, 255, 255, 0.5);
-    transform: translateX(0); /* Closed by default */
+    transform: translateX(0);
 }
 #introOverlay .door-left::after {
     right: 6px;
@@ -419,13 +380,12 @@
 #introOverlay .door-right {
     right: 0;
     border-left: 1px solid rgba(255, 255, 255, 0.5);
-    transform: translateX(0); /* Closed by default */
+    transform: translateX(0);
 }
 #introOverlay .door-right::after {
     left: 6px;
 }
 
-/* Doors Open State — slid open to reveal the elevator before the man walks in */
 #introOverlay .elevator-frame.doors-open .door-left {
     transform: translateX(-100%);
 }
@@ -438,7 +398,6 @@
     transition: opacity 0.3s ease;
 }
 
-/* Button Text */
 #introOverlay .button-text {
     font-size: 15px;
     font-weight: 500;
@@ -455,37 +414,28 @@
     opacity: 1;
 }
 
-/* --- 2D Businessman Character --- */
 #introOverlay .man-container {
     position: absolute;
-    /* Explicit top (rather than relying on flex auto-centering, which centers
-       based on each element's own height) so his feet land exactly on
-       .intro-floor at the same level as the lift's base. Accounts for the
-       shoe visually overshooting the container's own box (measured, not
-       guessed) — the leg + shoe geometry runs ~34px past the nominal
-       180px-tall box before the 0.65 scale is even applied. */
+    
     top: 139.4px;
     left: 20px;
     width: 100px;
     height: 180px;
     transform: scale(0.65);
     z-index: 5;
-    /* A gentle ease instead of linear, so he accelerates into the walk and settles
-       out of it rather than moving at one constant robotic speed the whole way. */
+    
     transition: transform 2.2s cubic-bezier(0.45, 0, 0.4, 1), opacity 0.4s ease;
 }
 
-/* Walking Motion into the Lift */
 #introOverlay .man-container.walk-in {
     transform: translateX(240px) scale(0.65);
 }
 
 #introOverlay .man-container.entered {
-    opacity: 0; /* Fades out behind closing doors */
-    pointer-events: none; /* so the invisible man doesn't swallow the click meant for the button beneath */
+    opacity: 0;
+    pointer-events: none;
 }
 
-/* Head & Face */
 #introOverlay .head {
     position: absolute;
     top: 15px;
@@ -496,7 +446,7 @@
     border-radius: 40% 50% 50% 40%;
     transform-origin: 50% 100%;
 }
-/* A light nod synced to each footfall — only while .stepping (see below) */
+
 #introOverlay .man-container.stepping .head {
     animation: headTilt 0.5s ease-in-out infinite;
 }
@@ -514,7 +464,6 @@
     background-color: var(--hair);
     border-radius: 50% 60% 40% 40%;
 }
-/* A soft highlight for a touch of gloss instead of one flat block of color */
 #introOverlay .hair-top::after {
     content: "";
     position: absolute;
@@ -586,7 +535,6 @@
     background-color: var(--skin);
 }
 
-/* Torso & Suit */
 #introOverlay .jacket {
     position: absolute;
     top: 54px;
@@ -598,8 +546,6 @@
     clip-path: polygon(0 0, 100% 0, 85% 100%, 0% 95%);
 }
 
-/* Lapels flanking the collar opening — small dark-suit triangles instead of a
-   completely flat, featureless front panel */
 #introOverlay .jacket .lapel {
     position: absolute;
     top: 0;
@@ -680,16 +626,12 @@
     border: 1px solid #d4af37;
 }
 
-/* A relative wrapper for the walking bob, kept separate from man-container's own
-   translateX/scale so the two transforms don't fight on the same element */
 #introOverlay .man-body {
     position: relative;
     width: 100%;
     height: 100%;
 }
 
-/* Bobs twice per stride (matches a footfall each half-cycle) plus a touch of
-   forward lean into the stride — only while .stepping (actively walking) */
 #introOverlay .man-container.stepping .man-body {
     animation: bodyBob 0.25s ease-in-out infinite;
 }
@@ -698,10 +640,6 @@
     50%      { transform: translateY(-2px) rotate(1deg); }
 }
 
-/* Legs & Walking Cycle — a real hip -> knee -> ankle chain instead of one rigid
-   segment, gated to .stepping (added exactly while he's translating, removed the
-   moment he arrives) so he stands naturally still before/after instead of either
-   marching in place beforehand or continuing to march in place once he's inside. */
 #introOverlay .leg.left {
     position: absolute;
     top: 125px;
@@ -730,7 +668,6 @@
     animation-delay: -0.25s;
 }
 
-/* A proper stride: heel-strike forward, roll through stance, quick toe-off back */
 @keyframes thighSwing {
     0%   { transform: rotate(-26deg); }
     15%  { transform: rotate(-9deg); }
@@ -760,10 +697,6 @@
     animation-delay: -0.25s;
 }
 
-/* Knee rotation is nested inside the thigh, so these are LOCAL angles that add to
-   the thigh's current angle to give the shin's true on-screen orientation. Every
-   value here stays positive so the knee only ever bends the one correct way —
-   it can never reverse-bend into a backward-looking kick during the swing. */
 @keyframes shinBend {
     0%   { transform: rotate(4deg); }
     15%  { transform: rotate(2deg); }
@@ -783,7 +716,6 @@
     background-color: var(--shoe);
     border-radius: 3px 8px 1px 1px;
 }
-/* A thin sole line so the shoe reads as more than a plain block */
 #introOverlay .shoe::after {
     content: "";
     position: absolute;
@@ -795,8 +727,6 @@
     border-radius: 1px;
 }
 
-/* Arm & Briefcase — a real shoulder -> elbow chain, swinging opposite the near
-   leg for a natural counterbalance while walking */
 #introOverlay .arm {
     position: absolute;
     top: 58px;
@@ -833,7 +763,7 @@
     animation: forearmBend 0.5s ease-in-out infinite;
     animation-delay: -0.25s;
 }
-/* Same local-angle-adds-to-parent logic as the knee — the elbow only ever flexes forward */
+
 @keyframes forearmBend {
     0%   { transform: rotate(4deg); }
     50%  { transform: rotate(8deg); }
@@ -861,7 +791,6 @@
     border-bottom: none;
 }
 
-/* ---------- CSS variables for the businessman's palette ---------- */
 #introOverlay {
     --skin: #f7cbac;
     --hair: #5a3d28;
@@ -875,7 +804,6 @@
     --belt: #4a2c11;
 }
 
-/* Pulse highlight drawing attention to the real Generate MSA button once the intro hands off */
 #generateBtn.cta-pulse {
   animation: ctaPulse 0.8s ease-out 2;
 }
@@ -901,7 +829,6 @@ body {
   border: 1px solid #000;
 }
 
-/* ---------- Nav ---------- */
 .topnav {
   display: flex;
   align-items: center;
@@ -952,7 +879,6 @@ body {
 .nav-link.active::after { width: 100%; }
 .nav-link.active { color: hsl(261deg 80% 48%); font-weight: 600; }
 
-/* ---------- History view (generated docs stored locally in IndexedDB) ---------- */
 .history-view {
   flex: 1;
   display: flex;
@@ -1047,7 +973,6 @@ body {
   color: #d13c3c;
 }
 
-/* ---------- Full-screen stage ---------- */
 .stage {
   flex: 1;
   display: grid;
@@ -1062,11 +987,17 @@ body {
 .hero {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: safe center;
   padding: 0 72px;
   border-right: 1px solid #000;
   overflow-y: auto;
   min-height: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hero::-webkit-scrollbar {
+  display: none;
 }
 
 .eyebrow {
@@ -1106,8 +1037,6 @@ body {
   transition: opacity 0.25s ease, color 0.25s ease;
 }
 
-/* Re-triggered by script.js on every status update, so new messages settle
-   in instead of just popping into the existing text node */
 .status.flash {
   animation: statusFlash 0.35s ease;
 }
@@ -1118,7 +1047,6 @@ body {
 
 .status.error { color: #d13c3c; }
 
-/* ---------- W-9 extracted-fields summary (left page) ---------- */
 .w9-summary {
   margin: 22px 0 0;
   max-width: 460px;
@@ -1126,6 +1054,10 @@ body {
   flex-direction: column;
   gap: 12px;
   animation: rise 0.4s ease both;
+}
+
+.w9-summary[hidden] {
+  display: none;
 }
 
 .w9-summary > div {
@@ -1183,8 +1115,6 @@ body {
   gap: 8px;
 }
 
-/* Missing/invalid required field — used on W-9 summary inputs, manual-detail
-   inputs, and the MSA upload zone/file list when a step's validation fails. */
 .field-error {
   border-color: #d13c3c !important;
   box-shadow: 0 0 0 3px rgba(209, 60, 60, 0.15) !important;
@@ -1206,8 +1136,31 @@ body {
   text-align: left;
 }
 
-.w9-edit-hint {
-  margin: 8px 0 0;
+.w9-review-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 460px;
+  margin: 22px 0 0;
+  padding: 12px 14px;
+  background: hsl(38deg 92% 95%);
+  border: 1px solid hsl(38deg 80% 70%);
+  border-radius: 10px;
+  color: #7a4a00;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  animation: rise 0.4s ease both;
+}
+
+.w9-review-alert[hidden] {
+  display: none;
+}
+
+.w9-review-alert-icon {
+  flex: none;
+  font-size: 1rem;
+  line-height: 1.4;
+  color: #d13c3c;
 }
 
 .w9-debug {
@@ -1234,7 +1187,6 @@ body {
   color: #444;
 }
 
-/* ---------- Action panel ---------- */
 .action-panel {
   display: flex;
   flex-direction: column;
@@ -1245,7 +1197,6 @@ body {
   min-height: 0;
 }
 
-/* ---------- Wizard: one step's screen visible at a time ---------- */
 .wizard {
   position: relative;
   display: flex;
@@ -1255,12 +1206,7 @@ body {
 }
 
 .wizard-loading {
-  /* Fixed (not absolute-within-#wizard) so it can't scroll away with the
-     step content it's covering — #wizard is a normal, content-sized child
-     of the scrollable .action-panel, so an overlay pinned to #wizard's own
-     box would scroll out from under itself once the panel is scrolled.
-     script.js sets top/left/width/height inline to match .action-panel's
-     current on-screen rect every time this is shown. */
+  
   position: fixed;
   z-index: 5;
   display: flex;
@@ -1275,9 +1221,6 @@ body {
   display: none;
 }
 
-/* Exact video file-stacking loader — class names prefixed with "loader-"
-   since plain names like .stage/.file-card/.line would collide with the
-   page's own layout classes (.stage is the main two-column grid). */
 .loader-stage {
   position: relative;
   width: 220px;
@@ -1434,9 +1377,6 @@ body {
   color: #1a1a1a;
 }
 
-/* Start Date: a plain text input (so "August 5th, 2026 (Tentative)"-style
-   text still works) with a calendar-icon button that opens a native date
-   picker and formats the picked date back into that same text field. */
 .date-field {
   position: relative;
   display: flex;
@@ -1466,8 +1406,6 @@ body {
   background: #f2f2f2;
 }
 
-/* The real date input is never shown — it only exists so its native
-   picker UI can be invoked and read from via JS. */
 .date-field-native {
   position: absolute;
   inset: 0;
@@ -1484,9 +1422,6 @@ body {
   box-shadow: 0 0 0 3px hsl(261deg 85% 92%);
 }
 
-/* Billing Rate: the "$" and "/hr" are fixed, non-editable text either side
-   of a number-only input — the user only ever types the number, and the
-   dollar sign / per-hour unit can't be mistyped or omitted. */
 .billing-rate-field {
   display: flex;
   align-items: center;
@@ -1554,8 +1489,7 @@ body {
   padding-top: 20px;
 }
 
-.wizard-step[data-step="2"] .wizard-nav,
-.wizard-step[data-step="3"] .wizard-nav {
+.wizard-step[data-step="2"] .wizard-nav {
   justify-content: space-between;
 }
 
@@ -1576,7 +1510,6 @@ body {
   box-shadow: none;
 }
 
-/* Replay the entrance rise each time a wizard step becomes active */
 .wizard-step.active {
   animation: rise 0.4s ease both;
 }
@@ -1590,6 +1523,35 @@ body {
   text-transform: uppercase;
   color: #aaa;
 }
+
+.step3-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.step3-header .step-label {
+  align-self: flex-start;
+  margin-bottom: 0;
+}
+
+.btn-new-doc {
+  padding: 10px 20px;
+  font-size: 11px;
+  flex: none;
+}
+
+.step3-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+}
+
+.step3-body h2 { margin: 0 0 18px; }
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(12px); }
@@ -1607,8 +1569,6 @@ body {
   transition: background-color 0.25s ease;
 }
 
-/* Dragging a file over the drop zone actually gives visible feedback now,
-   instead of the class toggling with nothing styled for it to show */
 .upload-block.drag-over {
   background-color: hsl(261deg 85% 97%);
 }
@@ -1645,7 +1605,6 @@ body {
 
 .file-list li span.size { color: #999; }
 
-/* ---------- Buttons (Uiverse.io by barisdogansutcu, extended) ---------- */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1711,7 +1670,7 @@ body {
   transition: width 0.3s ease, opacity 0.3s ease;
 }
 
-#generateBtn.is-loading .btn-spinner {
+#step1NextBtn.is-loading .btn-spinner {
   width: 15px;
   opacity: 1;
   animation: spin 0.7s linear infinite;
@@ -1734,4 +1693,237 @@ body {
 @media (max-width: 560px) {
   .topnav { padding: 18px 24px; }
   .nav-links { display: none; }
+}
+
+.preview-toggle {
+  position: fixed;
+  top: 50%;
+  right: 15px;
+  z-index: 700;
+  transform: translateY(-50%) rotate(-90deg) translateX(50%);
+  transform-origin: right center;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 24px;
+  border: 1px solid #000;
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  background-color: white;
+  box-shadow: rgb(0 0 0 / 10%) 0 2px 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1a1a1a;
+  cursor: pointer;
+  transition: background-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.preview-toggle-icon {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+}
+
+.preview-toggle-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.preview-toggle-icon-close { display: none; }
+
+.preview-toggle:hover {
+  background-color: hsl(261deg 80% 48%);
+  color: white;
+  box-shadow: rgb(0 0 0 / 16%) 0 4px 14px;
+}
+
+.preview-toggle[aria-expanded="true"] {
+  background-color: hsl(261deg 80% 48%);
+  color: white;
+}
+
+.preview-toggle[aria-expanded="true"] .preview-toggle-icon svg:first-child { display: none; }
+.preview-toggle[aria-expanded="true"] .preview-toggle-icon-close { display: block; }
+
+.preview-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50vw;
+  background: #fafafa;
+  border-left: 1px solid #000;
+  box-shadow: rgb(0 0 0 / 14%) -16px 0 32px;
+  transform: translateX(100%);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-panel.is-open {
+  transform: translateX(0);
+}
+
+.preview-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  background: white;
+  border-bottom: 1px solid #000;
+  flex: none;
+}
+
+.preview-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.preview-panel-title-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  color: hsl(261deg 80% 48%);
+}
+
+.preview-panel-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 4px;
+  border: 1px solid #000;
+  border-radius: 30px;
+  background: white;
+}
+
+.preview-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #1a1a1a;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.preview-zoom-btn:hover {
+  background-color: hsl(261deg 80% 48%);
+  color: white;
+}
+
+.preview-zoom-level {
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #555;
+}
+
+.preview-paper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.preview-empty-state {
+  margin: auto;
+  max-width: 280px;
+  padding: 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  color: #aaa;
+}
+
+.preview-empty-state svg {
+  width: 44px;
+  height: 44px;
+  color: #ccc;
+}
+
+.preview-empty-state p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.preview-loading {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border: 1px solid #000;
+  border-radius: 30px;
+  background: white;
+  box-shadow: rgb(0 0 0 / 14%) 0 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #444;
+  animation: previewLoadingIn 0.2s ease both;
+}
+
+@keyframes previewLoadingIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.preview-loading-spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  border-top-color: hsl(261deg 80% 48%);
+  animation: spin 0.7s linear infinite;
+}
+
+.preview-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.preview-frame.is-ready { opacity: 1; }
+
+.preview-frame[hidden],
+.preview-empty-state[hidden],
+.preview-loading[hidden],
+.preview-zoom-controls[hidden] {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .preview-panel { width: 100vw; }
 }

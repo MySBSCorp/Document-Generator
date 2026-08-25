@@ -48,9 +48,9 @@ Document-Generator/
 └── AUTH.md               # this file
 ```
 
-No `node_modules`, build step, or bundler is required to run this. If you'd
-rather manage MSAL via npm/Vite (e.g. to get automatic updates through a
-lockfile instead of manually re-vendoring), see [Section G](#npmvite-alternative).
+This project runs on Vite (`npm install`, then `npm run dev`/`npm run build`)
+— see [Section G's "NPM/Vite build"](#npmvite-build) for the details, and for
+how to revert to a no-build/no-`node_modules` setup if you ever need to.
 
 ## C. Complete code
 
@@ -61,7 +61,7 @@ All the auth-specific files above are already in the repo:
 - [`auth-ui.js`](auth-ui.js) — shows/hides `#authGate`'s loading/unauthenticated/error panels, the separate `#authBlockedModal` pop-up warning (shown on `AccessDeniedError`), and the nav's `#authUser` badge; only ever displays `account.name` and `getAccountEmail(account)`, always via `textContent`.
 - [`index.html`](index.html) — `#authGate` overlay (z-index above the intro animation, so nothing is reachable pre-auth) and the `#authUser` nav badge; updated CSP.
 - [`style.css`](style.css) — `#authGate` / `.auth-user` styles (flat, full-screen layout — no boxed card).
-- [`.env.example`](.env.example) — documents the three `VITE_MSAL_*` values; copy to `.env` if using the [npm/Vite variant](#npmvite-alternative).
+- [`.env.example`](.env.example) — documents the three `VITE_MSAL_*` values; copy to `.env` and fill in real values (see [Section F](#f-local-testing-instructions)).
 - [`vendor/msal-browser-4.30.0.esm.js`](vendor/msal-browser-4.30.0.esm.js) + [`vendor/msal-common-15.17.0.esm.js`](vendor/msal-common-15.17.0.esm.js) — MSAL itself, vendored (not loaded from a live CDN) for the same Subresource-Integrity reasoning already used for this project's other ES-module dependencies; see `vendor/README.md`.
 
 ## D. How authentication works
@@ -91,20 +91,14 @@ All the auth-specific files above are already in the repo:
 
 ## F. Local testing instructions
 
-1. Register the app per [Section A](#a-microsoft-entra-configuration), using your local dev URL (e.g. `http://localhost:5500`) as the SPA redirect URI. `http://localhost` origins are allowed by Entra for SPA redirect URIs even without HTTPS; any other non-localhost origin must be HTTPS.
-2. Set real values for the `>>> REPLACE` markers in `authConfig.js`:
-   - `clientId` → the Application (client) ID from Entra's Overview page.
-   - `tenantId` → the Directory (tenant) ID from the same page.
-   - `redirectUri` is already computed from `window.location.origin` — you don't need to hardcode it, but it **must exactly match** a redirect URI registered in Entra (same scheme, host, and port).
+This project runs on **Vite** (`package.json`) — `.env` is read for real at `npm run dev`/`npm run build` time, not just documentation. There's no `authConfig.js` hardcoded fallback for the client/tenant ID anymore; `.env` is the actual source of truth.
 
-   Either edit `authConfig.js` directly, or (if using the [npm/Vite variant](#npmvite-alternative)) copy [`.env.example`](.env.example) to `.env` and fill in `VITE_MSAL_CLIENT_ID` / `VITE_MSAL_TENANT_ID` / `VITE_MSAL_REDIRECT_URI` there instead. There is nothing to configure here for *who's allowed* — that's entirely the Entra "Assignment required" step from Section A.
-3. Serve the folder over HTTP — don't open `index.html` via `file://`, since MSAL's redirect flow and the CSP both assume a real origin. Any static server works, e.g.:
-   ```bash
-   npx serve .
-   # or
-   python -m http.server 5500
-   ```
-4. Open the dev URL, click **Sign in with Microsoft**, sign in with an account you've assigned in Entra (the whole page navigates to Entra and back), and confirm the nav shows your name/email and the wizard becomes usable. Reload the page and confirm it signs you back in silently (no prompt) via `restoreSession()`. Click **Sign out** and confirm the app navigates through Entra's logout and back to the sign-in screen. Then try signing in with an account you have **not** assigned and confirm Entra itself refuses it (most likely its own hosted error page, similar to a redirect-URI-mismatch page — not this app's UI at all, since Entra never hands this app a token for that account).
+1. Register the app per [Section A](#a-microsoft-entra-configuration), using your local dev URL (e.g. `http://localhost:5173`, Vite's default) as the SPA redirect URI. `http://localhost` origins are allowed by Entra for SPA redirect URIs even without HTTPS; any other non-localhost origin must be HTTPS.
+2. `npm install` (one-time).
+3. Copy [`.env.example`](.env.example) to `.env` and fill in real values for `VITE_MSAL_CLIENT_ID` / `VITE_MSAL_TENANT_ID` (from the Entra Overview page) and, if your dev URL isn't `http://localhost:5173`, `VITE_MSAL_REDIRECT_URI` too. There is nothing to configure here for *who's allowed* — that's entirely the Entra "Assignment required" step from Section A.
+4. `npm run dev` — don't open `index.html` via `file://` or a separate plain static server, since MSAL's redirect flow, the CSP, and `import.meta.env` all assume Vite's own dev server / a real origin.
+5. Open the dev URL Vite prints, click **Sign in with Microsoft**, sign in with an account you've assigned in Entra (the whole page navigates to Entra and back), and confirm the nav shows your name/email and the wizard becomes usable. Reload the page and confirm it signs you back in silently (no prompt) via `restoreSession()`. Click **Sign out** and confirm the app navigates through Entra's logout and back to the sign-in screen. Then try signing in with an account you have **not** assigned and confirm Entra itself refuses it (most likely its own hosted error page, similar to a redirect-URI-mismatch page — not this app's UI at all, since Entra never hands this app a token for that account).
+6. To test the production build itself: `npm run build` then `npm run preview` — confirms the same flow works against the built, minified bundle, not just the dev server.
 
 ## G. Production deployment instructions
 
@@ -115,34 +109,22 @@ This is a static site — deploy it exactly like the rest of this app (any stati
 
 ### Per-environment configuration without a backend
 
-Since there's no build step, the client/tenant ID are plain values in a committed file — safe, because they're public (Section E). If you want different values per environment without hand-editing the file on each deploy:
+The client/tenant ID are plain, public values (Section E) — safe to have in a build-time `.env` or committed file either way. Per environment, either:
 
-- Simplest: keep separate branches/copies of `authConfig.js` per environment and let your deploy pipeline pick the right one, or template it as a build step that only substitutes these public values (still committing no secret).
-- If you adopt the [npm/Vite variant](#npmvite-alternative), use Vite's `import.meta.env.VITE_*` build-time variables — but remember these still end up as plain text in the shipped bundle; `VITE_*` variables are not a secrets mechanism, only a build-time templating one.
+- Keep a separate `.env` per environment (never committed — see `.gitignore`) and point your deploy pipeline at the right one before running `npm run build`, or
+- Keep separate branches/copies of `authConfig.js`'s `>>> REPLACE` markers if you ever go back to running without Vite (see below).
 
-### NPM/Vite alternative
+Either way, remember `.env`/`VITE_*` variables are not a secrets mechanism — Vite inlines them as plain text into the shipped bundle, same as if you'd hardcoded them (Section E).
 
-If a build step is acceptable, replace the vendored `vendor/msal-browser-*.esm.js` with the real npm package instead of manually re-vendoring on updates:
+### NPM/Vite build
 
-```bash
-npm install @azure/msal-browser
-```
+This project builds with Vite — `npm install`, then `npm run dev` (local) or `npm run build` + `npm run preview` (production build, served locally to test). `authConfig.js` reads `import.meta.env.VITE_MSAL_CLIENT_ID` / `VITE_MSAL_TENANT_ID` / `VITE_MSAL_REDIRECT_URI`, which Vite populates from `.env` at dev-server-start/build time (see [`.env.example`](.env.example)).
 
-```js
-// authConfig.js — same shape as the CDN-free version above
-import { PublicClientApplication } from "@azure/msal-browser";
-```
+`vite.config.js` exists solely to work around one thing: the vendored MSAL bundle (`vendor/msal-browser-4.30.0.esm.js`) contains a dead dynamic `import()` pointing at a live jsDelivr URL, inside an internal MSAL code path this app never triggers. Vite's bundler tries to statically resolve it and fails the build without the `external` entry in that config — see `vendor/README.md`'s "Patch" note for the full story and why the vendored file's recorded SHA-512 changed as part of fixing it.
 
-`authConfig.js` already reads `import.meta.env.VITE_MSAL_CLIENT_ID` /
-`VITE_MSAL_TENANT_ID` / `VITE_MSAL_REDIRECT_URI` first, falling back to
-the hardcoded placeholders when no bundler is present — so adopting Vite
-just means copying [`.env.example`](.env.example) to `.env` and filling in
-real values; no code changes needed. `.env` is still not a secrets
-mechanism here (Section E) — it's build-time templating for public values,
-and Vite inlines them into the shipped bundle same as if you'd hardcoded
-them.
+**Reverting to a no-build setup** (e.g. to go back to a plain static file server with no `npm install` at all) is still possible but requires a code change, not just a config one: `authConfig.js`'s `clientId`/`tenantId` no longer have a hardcoded real-value fallback (only the placeholder GUID) — you'd need to add one back, e.g. `env?.VITE_MSAL_CLIENT_ID || "your-real-client-id"`, accepting that the real value then lives in the committed file again (still fine, since it's public — Section E).
 
-Everything else (`auth.js`'s API surface, the CSP requirements, the security properties in Section E) is unchanged — Vite just handles bundling/dev-serving instead of a plain static file server. This is optional; the core deliverable in this repo has no build dependency.
+Everything else (`auth.js`'s API surface, the CSP requirements, the security properties in Section E) is unaffected by whether Vite is used — it only changes how `authConfig.js`'s three values get their real values and how the site is served/built.
 
 ## H. Security checklist before deployment
 
