@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://login.microsoftonline.com; frame-src https://login.microsoftonline.com blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Document Generator</title>
-<link rel="stylesheet" href="style.css?v=20260824-17">
+<link rel="stylesheet" href="style.css?v=20260826-24">
 </head>
 <body>
 
@@ -111,7 +111,7 @@
   </div>
 
   <nav class="topnav" inert>
-    <span class="brand">Document Generator</span>
+    <span class="brand"><img class="brand-logo" src="/assets/logo.jpg" alt="SbS Beyond IT"><span class="brand-text">Document Generator</span></span>
     <div class="nav-links">
       <a href="#" class="nav-link active" id="navGeneratorLink">Generator</a>
       <a href="#" class="nav-link" id="navHistoryLink">History</a>
@@ -160,7 +160,7 @@
         <div>
           <dt>Tax ID</dt>
           <dd class="w9-taxid-fields">
-            <input type="text" id="w9TaxId" placeholder="—">
+            <input type="text" id="w9TaxId" placeholder="—" inputmode="numeric">
             <select id="w9TaxIdType">
               <option value="SSN">SSN</option>
               <option value="EIN">EIN</option>
@@ -177,6 +177,8 @@
         <summary>Raw extracted text (debug)</summary>
         <pre id="w9RawText"></pre>
       </details>
+
+      <button type="button" class="btn btn-nav btn-new-doc" id="startNewBtn" hidden>Generate New Document</button>
     </section>
 
     <section class="action-panel">
@@ -235,6 +237,7 @@
           <span class="step-label">Step 2</span>
           <h2>Manual details</h2>
           <p class="hint">These aren't on the W-9, so enter them by hand.</p>
+          <p class="status wizard-status" id="manualFieldsStatus" role="status"></p>
           <div class="manual-fields">
             <label>Contractor Representative(s)<input type="text" id="manualRep" placeholder="e.g. Jane Doe"></label>
             <label>Role<input type="text" id="manualRole" placeholder="e.g. GIS Architect"></label>
@@ -261,10 +264,7 @@
         </div>
 
         <div class="wizard-step" data-step="3">
-          <div class="step3-header">
-            <button type="button" class="btn btn-nav btn-new-doc" id="startNewBtn">Generate New Document</button>
-            <span class="step-label">Step 3</span>
-          </div>
+          <span class="step-label">Step 3</span>
           <div class="step3-body">
             <h2>Download</h2>
             <div class="download-options">
@@ -308,24 +308,48 @@
           <button type="button" class="preview-zoom-btn" id="previewZoomInBtn" aria-label="Zoom in">&#43;</button>
         </div>
       </div>
+      <div class="preview-tabs" id="previewTabs" role="tablist">
+        <button type="button" class="preview-tab is-active" id="previewTabGenerated" role="tab" aria-selected="true" data-preview-tab="generated">Generated MSA</button>
+        <button type="button" class="preview-tab" id="previewTabW9" role="tab" aria-selected="false" data-preview-tab="w9">Uploaded W-9</button>
+      </div>
+      <p class="status preview-status" id="previewStatus" role="status"></p>
       <div class="preview-paper">
-        <div class="preview-empty-state" id="previewEmptyState">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-            <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
-            <path d="M14 3v5h5"/>
-            <path d="M9 13h6M9 16.5h4"/>
-          </svg>
-          <p>Insert data into the MSA template to see a live document preview here.</p>
+        <div class="preview-view is-active" id="previewViewGenerated">
+          <div class="preview-empty-state" id="previewEmptyState">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+              <path d="M14 3v5h5"/>
+              <path d="M9 13h6M9 16.5h4"/>
+            </svg>
+            <p>Insert data into the MSA template to see a live document preview here.</p>
+          </div>
+          <div class="preview-loading" id="previewLoading" hidden>
+            <span class="preview-loading-spinner" aria-hidden="true"></span>
+            <span>Updating preview&hellip;</span>
+          </div>
+          <iframe class="preview-frame" id="previewFrame" title="MSA document preview" hidden></iframe>
         </div>
-        <div class="preview-loading" id="previewLoading" hidden>
-          <span class="preview-loading-spinner" aria-hidden="true"></span>
-          <span>Updating preview&hellip;</span>
+        <div class="preview-view" id="previewViewW9" hidden>
+          <div class="preview-empty-state" id="w9PreviewEmptyState">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+              <path d="M14 3v5h5"/>
+              <path d="M9 13h6M9 16.5h4"/>
+            </svg>
+            <p>Upload a W-9 file to see it here.</p>
+          </div>
+          <div class="preview-loading" id="w9PreviewLoading" hidden>
+            <span class="preview-loading-spinner" aria-hidden="true"></span>
+            <span>Loading preview&hellip;</span>
+          </div>
+          <div class="w9-preview-pages" id="w9PreviewPages" hidden>
+            <img class="preview-w9-image" id="w9PreviewImage" alt="Uploaded W-9 preview" hidden>
+          </div>
         </div>
-        <iframe class="preview-frame" id="previewFrame" title="MSA document preview" hidden></iframe>
       </div>
     </aside>
   </main>
 <script type="module" src="auth-ui.js?v=2"></script>
-<script type="module" src="script.js?v=20260824-17"></script>
+<script type="module" src="script.js?v=20260826-2"></script>
 </body>
 </html>

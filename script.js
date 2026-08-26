@@ -26,6 +26,7 @@ const manualStartDatePicker = document.getElementById('manualStartDatePicker');
 const manualStartDatePickerBtn = document.getElementById('manualStartDatePickerBtn');
 const manualBillingRate = document.getElementById('manualBillingRate');
 const applyManualBtn = document.getElementById('applyManualBtn');
+const manualFieldsStatus = document.getElementById('manualFieldsStatus');
 
 manualStartDatePickerBtn.addEventListener('click', () => {
   if (manualStartDatePicker.showPicker) {
@@ -104,9 +105,30 @@ function showWizardStep(n) {
   w9Summary.hidden = !(showW9Panel && w9SummaryRevealed);
   w9EditHint.hidden = !(showW9Panel && w9SummaryRevealed);
   w9Debug.hidden = !(showW9Panel && w9DebugRevealed);
+  startNewBtn.hidden = n !== 3;
+
+  if (n === 3) {
+    status.textContent = '';
+    status.classList.remove('error');
+  }
 }
 
 function positionWizardLoading() {
+  // On the mobile layout (see style.css's 900px breakpoint) the action panel
+  // is a normal, natural-flow block that can be taller than the viewport and
+  // scrolls with the page — so a `position: fixed` overlay sized to its
+  // getBoundingClientRect() (captured once, at whatever scroll position the
+  // page happened to be at) drifts out of alignment, or off-screen entirely,
+  // the moment the user scrolls. The desktop layout doesn't have that
+  // problem (the action panel is a fixed-height pane that never scrolls the
+  // page itself), so only mobile needs the full-viewport fallback.
+  if (window.innerWidth <= 900) {
+    wizardLoading.style.top = '0px';
+    wizardLoading.style.left = '0px';
+    wizardLoading.style.width = '100vw';
+    wizardLoading.style.height = '100vh';
+    return;
+  }
   const rect = actionPanel.getBoundingClientRect();
   wizardLoading.style.top = `${rect.top}px`;
   wizardLoading.style.left = `${rect.left}px`;
@@ -188,9 +210,10 @@ function addFiles(fileArray) {
   w9Debug.hidden = true;
   clearDocumentPreview();
 
-  const hasW9 = uploadedFiles.some(isW9UploadCandidate);
-  extractDataBtn.disabled = !hasW9;
+  const w9File = uploadedFiles.find(isW9UploadCandidate);
+  extractDataBtn.disabled = !w9File;
   step1NextBtn.disabled = true;
+  renderW9Preview(w9File);
 }
 
 extractDataBtn.addEventListener('click', async () => {
@@ -291,18 +314,28 @@ function refreshW9ValidationStatus() {
   return valid;
 }
 
-function detectTaxIdType(value) {
-  const dashIndex = value.indexOf('-');
-  if (dashIndex === 3) return 'SSN';
-  if (dashIndex === 2) return 'EIN';
-  return null;
-}
-
 function formatTaxId(digits, type) {
   if (digits.length !== 9) return digits;
   if (type === 'SSN') return `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}`;
   if (type === 'EIN') return `${digits.slice(0, 2)}-${digits.slice(2)}`;
   return digits;
+}
+
+// Builds a dash-formatted tax ID from whatever digits have been typed so
+// far (not just once all 9 are in), so the hyphen appears live as the user
+// types instead of only after the field is complete.
+function formatTaxIdPartial(raw, type) {
+  const digits = raw.replace(/\D/g, '').slice(0, 9);
+  const groups = type === 'SSN' ? [3, 2, 4] : [2, 7];
+  let out = '';
+  let i = 0;
+  for (const len of groups) {
+    const part = digits.slice(i, i + len);
+    if (!part) break;
+    out += (out ? '-' : '') + part;
+    i += len;
+  }
+  return out;
 }
 
 w9CompanyName.addEventListener('input', () => {
@@ -311,11 +344,10 @@ w9CompanyName.addEventListener('input', () => {
   scheduleLivePreviewUpdate();
 });
 w9TaxId.addEventListener('input', () => {
-  const value = w9TaxId.value.trim();
+  const formatted = formatTaxIdPartial(w9TaxId.value, w9TaxIdType.value);
+  w9TaxId.value = formatted;
+  const value = formatted;
   if (extractedW9Data) extractedW9Data.tax_id_number = value;
-
-  const detectedType = detectTaxIdType(value);
-  if (detectedType) w9TaxIdType.value = detectedType;
 
   if (extractedW9Data) {
     extractedW9Data.selected_tax_id_type = w9TaxIdType.value;
@@ -333,7 +365,7 @@ w9TaxIdType.addEventListener('change', () => {
   if (extractedW9Data) {
     newValue = (newType === 'SSN' ? extractedW9Data.ssn_number : extractedW9Data.ein_number) || '';
   } else {
-    newValue = formatTaxId(newValue.replace(/\D/g, ''), newType);
+    newValue = formatTaxIdPartial(newValue, newType);
   }
 
   w9TaxId.value = newValue;
@@ -845,7 +877,98 @@ function regionInkDensity(canvas, bbox, marginRatio = 0.12) {
 // between SSN and EIN. Tesseract.js workers run jobs one at a time
 // internally anyway, so sharing one across all those calls costs nothing in
 // correctness and saves most of that overhead.
-async function ocrDigitRowAtBbox(worker, canvas, bbox, upscale) {
+// Boxed tax-ID forms print each digit inside its own bordered cell, and
+// those border strokes sit immediately next to the digit glyphs. Verified
+// by eye against several scans where the digit itself was perfectly legible
+// but Tesseract still silently dropped it under every page-segmentation
+// mode tried — the border stroke was fusing into the neighboring glyph
+// during character segmentation. A box border is easy to tell apart from a
+// digit stroke on its own terms: it runs near-solid-dark for almost the
+// entire cell height, where even the tallest digit strokes ("1", "7") only
+// partially cover it. Painting those near-full-height columns white before
+// OCR removes the interference without needing to know where any
+// individual digit boundary falls.
+function whiteOutGridLines(ctx, width, height) {
+  const { data } = ctx.getImageData(0, 0, width, height);
+  const colDark = new Array(width).fill(0);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      if (lum < 150) colDark[x]++;
+    }
+  }
+  // A perfectly vertical border column is dark for nearly its whole height,
+  // but a scan with even a slight rotation renders that same border as a
+  // shallow diagonal — its darkness spreads across a few neighboring
+  // columns as y increases, so no single column reaches the height
+  // threshold on its own. Scoring each column by the best-covered column
+  // within a small window around it tolerates that drift (a few degrees of
+  // skew over a digit row's height) while still only affecting the narrow
+  // band immediately around a real border stroke.
+  const DRIFT_RADIUS = 2;
+  const threshold = height * 0.7;
+  const isBorderCol = new Array(width).fill(false);
+  for (let x = 0; x < width; x++) {
+    let best = 0;
+    for (let dx = -DRIFT_RADIUS; dx <= DRIFT_RADIUS; dx++) {
+      const xi = x + dx;
+      if (xi >= 0 && xi < width) best = Math.max(best, colDark[xi]);
+    }
+    if (best >= threshold) isBorderCol[x] = true;
+  }
+  let changed = false;
+  for (let x = 0; x < width; x++) {
+    if (!isBorderCol[x]) continue;
+    changed = true;
+    for (let y = 0; y < height; y++) {
+      const i = (y * width + x) * 4;
+      data[i] = data[i + 1] = data[i + 2] = 255;
+    }
+  }
+  if (changed) ctx.putImageData(new ImageData(data, width, height), 0, 0);
+}
+
+// A photo taken in poor lighting (rather than a flatbed scan) can leave
+// printed digits and the box border only a few shades darker than the
+// paper — real ink, but too low-contrast for Tesseract's binarization to
+// separate from the background at all, let alone for the border-column
+// detection above to tell a border from a digit. Stretching the crop's own
+// darkest-to-lightest pixel range out to full black-to-white before either
+// step fixes both: it costs nothing on an already high-contrast scan
+// (its range is already close to 0-255) and can recover an otherwise
+// invisible-to-OCR photo.
+function stretchContrast(ctx, width, height) {
+  const imgData = ctx.getImageData(0, 0, width, height);
+  const d = imgData.data;
+  let min = 255;
+  let max = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    if (g < min) min = g;
+    if (g > max) max = g;
+  }
+  const range = max - min;
+  // Skip entirely once the crop already reaches close to white: measured
+  // against a real regression — this same stretch, run unconditionally,
+  // pushed a crisp CamScanner-quality digit row's already near-full-range
+  // contrast (min 0, max ~254) a little further, and that was enough to
+  // turn a legible "9" into something the classifier read as "0". A photo
+  // taken in bad lighting doesn't have this problem to begin with: its
+  // brightest pixel (the paper background) never gets close to white
+  // (measured around 155-175, not 240+), which is exactly the signal that
+  // there's real headroom to recover rather than noise to amplify.
+  if (range <= 10 || max >= 240) return;
+  const scale = 255 / range;
+  for (let i = 0; i < d.length; i += 4) {
+    const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    const v = Math.max(0, Math.min(255, (g - min) * scale));
+    d[i] = d[i + 1] = d[i + 2] = v;
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+async function ocrDigitRowAtBbox(worker, canvas, bbox, upscale, useWhiteout) {
   if (!bbox) return '';
   const pad = 4;
   const x0 = Math.max(0, bbox.x0 - pad);
@@ -859,11 +982,29 @@ async function ocrDigitRowAtBbox(worker, canvas, bbox, upscale) {
   const outCtx = out.getContext('2d');
   outCtx.imageSmoothingEnabled = false;
   outCtx.drawImage(canvas, x0, y0, w, h, 0, 0, out.width, out.height);
+  if (useWhiteout) {
+    stretchContrast(outCtx, out.width, out.height);
+    whiteOutGridLines(outCtx, out.width, out.height);
+  }
 
   const result = await worker.recognize(out);
 
-  let digits = (result.data.text || '').replace(/\D/g, '');
-  if (digits.length === 10) digits = digits.slice(1);
+  // The wideLeft crop variant deliberately reaches further left than the
+  // detected row to recover a digit clipped at the box's own left edge —
+  // but that same reach can also pull in a NEARBY unrelated line of small
+  // print (an instruction referencing "line 1", a footnote number) that
+  // happens to sit just outside the box. A stray digit from that text
+  // isn't distinguishable from a real one once every digit in the crop's
+  // text gets pooled together — verified against a case where exactly
+  // this happened: one stray "1" from nearby text plus the box's own last
+  // digit landing just outside this crop's right edge together added up
+  // to a wrong-but-plausible 9-digit string. The box's own digits are
+  // printed contiguously (with only dashes between them), so picking the
+  // longest [\d-]+ run instead of pooling every digit in the whole crop
+  // keeps a same-line stray digit from being mistaken for a dropped one.
+  const runs = (result.data.text || '').match(/[\d-]+/g) || [];
+  const longestRun = runs.reduce((best, r) => (r.replace(/-/g, '').length > best.replace(/-/g, '').length ? r : best), '');
+  const digits = longestRun.replace(/\D/g, '');
   return digits;
 }
 
@@ -875,13 +1016,13 @@ async function ocrDigitRowAtBbox(worker, canvas, bbox, upscale) {
 // expected length when there's no disagreement about what it is; two
 // different same-length stories is a sign something's wrong and it's safer
 // to report "not found" than guess.
-async function ocrTaxIdDigitsAtScale(worker, canvas, bbox, expectedLength, upscale) {
+async function ocrTaxIdDigitsAtScale(worker, canvas, bbox, expectedLength, upscale, useWhiteout) {
   const rowWidth = bbox.x1 - bbox.x0;
   const wideLeft = Math.max(0, bbox.x0 - rowWidth);
   const wideRight = bbox.x1 + rowWidth * 0.5;
   const [fromWideLeft, fromDetected] = await Promise.all([
-    ocrDigitRowAtBbox(worker, canvas, { x0: wideLeft, x1: wideRight, y0: bbox.y0, y1: bbox.y1 }, upscale),
-    ocrDigitRowAtBbox(worker, canvas, { x0: bbox.x0, x1: wideRight, y0: bbox.y0, y1: bbox.y1 }, upscale),
+    ocrDigitRowAtBbox(worker, canvas, { x0: wideLeft, x1: wideRight, y0: bbox.y0, y1: bbox.y1 }, upscale, useWhiteout),
+    ocrDigitRowAtBbox(worker, canvas, { x0: bbox.x0, x1: wideRight, y0: bbox.y0, y1: bbox.y1 }, upscale, useWhiteout),
   ]);
   const wideLeftOk = fromWideLeft.length === expectedLength;
   const detectedOk = fromDetected.length === expectedLength;
@@ -910,14 +1051,106 @@ async function ocrTaxIdDigitsAtScale(worker, canvas, bbox, expectedLength, upsca
 // winner from that honestly.
 const DIGIT_OCR_SCALES = [2, 3, 4];
 
+// Returns { value, candidate }. `value` is the same three-state signal as
+// before (digit string / '' not-found / null ambiguous) built from this
+// bbox's own 3 scale attempts alone. `candidate` additionally surfaces the
+// single best-supported reading even when it didn't reach its own 2-of-3
+// majority, so a caller can cross-check it against an independently
+// sourced reading (e.g. the fixed-region fallback crop's own attempt) —
+// corroboration this one tier's internal vote count couldn't provide by
+// itself. Verified against a case where the dynamic-anchor crop and the
+// fixed-region crop each independently landed on the same correct 9-digit
+// value exactly once (1 of their own 3 scales) — neither alone reached a
+// majority, so without this the box was left unconfirmed even though two
+// differently-sourced crops agreed with each other.
 async function ocrTaxIdDigits(worker, canvas, bbox, expectedLength) {
-  if (!bbox) return '';
-  if (regionInkDensity(canvas, bbox) < MIN_DIGIT_INK_DENSITY) return '';
+  if (!bbox) return { value: '', candidate: '' };
+  const density = regionInkDensity(canvas, bbox);
+  if (density < MIN_DIGIT_INK_DENSITY) return { value: '', candidate: '' };
 
-  const results = await Promise.all(
-    DIGIT_OCR_SCALES.map((scale) => ocrTaxIdDigitsAtScale(worker, canvas, bbox, expectedLength, scale))
+  const whiteoutResults = await Promise.all(
+    DIGIT_OCR_SCALES.map((scale) => ocrTaxIdDigitsAtScale(worker, canvas, bbox, expectedLength, scale, true))
   );
-  const valid = results.filter((d) => d.length === expectedLength);
+
+  // Whiting out the box's own grid lines (see whiteOutGridLines) fixes
+  // real cases where a border stroke was fusing into a digit glyph and
+  // dropping it entirely — but the same operation can, on a different
+  // scan, nibble into a digit's OWN stroke near the border closely enough
+  // to bias its shape (an open "6" reading as a closed "8", verified
+  // against a real case; a similarly-shaped confusion isn't hard to
+  // imagine for other digit pairs). Re-running the identical 3-scale vote
+  // with whiteout OFF and pooling both sets into one majority catches
+  // that: a whiteout-only artifact shows up as a 3-3 split against the
+  // untouched raw reading rather than a clean majority, and pairwise ties
+  // are treated as ambiguous below rather than arbitrarily preferring
+  // whichever group happened to run first.
+  //
+  // This always runs, even when the whiteout group already agrees with
+  // itself unanimously — a tempting-looking shortcut that was tried and
+  // is actively dangerous: whiteout being wrong AND perfectly consistent
+  // about it (all 3 scales biasing the same digit's shape the same way)
+  // is exactly the failure mode this second pass exists to catch. "It
+  // already looks confident" is not evidence it's uncontaminated.
+  const rawResults = await Promise.all(
+    DIGIT_OCR_SCALES.map((scale) => ocrTaxIdDigitsAtScale(worker, canvas, bbox, expectedLength, scale, false))
+  );
+  const results = [...whiteoutResults, ...rawResults];
+  const exactLength = results.filter((d) => d.length === expectedLength);
+  // A one-digit-too-long reading is usually a real box digit plus exactly
+  // one stray extra character — but WHICH end it lands on varies: verified
+  // cases exist of it landing at the front (a nearby digit bleeding in
+  // before the box) and in the middle (a border/dash fragment misread as a
+  // digit between two real ones), so blindly trimming a fixed end (like
+  // always dropping the first digit) fixes one shape and silently breaks
+  // the other. Only trimming a length+1 reading down when doing so lands
+  // on a value some OTHER scale already read cleanly at the right length
+  // avoids guessing which end is the stray one — it only ever "rescues" a
+  // noisy reading when a genuinely independent scale already corroborates
+  // the trimmed result.
+  // Every candidate value is tagged with which preprocessing group(s)
+  // produced it, so a later tie can be broken by an actual signal (see
+  // below) instead of an arbitrary pick.
+  const valid = []; // { value, source: 'whiteout' | 'raw' }
+  whiteoutResults.forEach((d) => {
+    if (d.length === expectedLength) valid.push({ value: d, source: 'whiteout' });
+  });
+  rawResults.forEach((d) => {
+    if (d.length === expectedLength) valid.push({ value: d, source: 'raw' });
+  });
+
+  const longerWithSource = [
+    ...whiteoutResults.filter((d) => d.length === expectedLength + 1).map((d) => ({ value: d, source: 'whiteout' })),
+    ...rawResults.filter((d) => d.length === expectedLength + 1).map((d) => ({ value: d, source: 'raw' })),
+  ];
+  const longerCounts = new Map();
+  longerWithSource.forEach(({ value }) => longerCounts.set(value, (longerCounts.get(value) || 0) + 1));
+  for (const [d] of longerCounts.entries()) {
+    const dropFirst = d.slice(1);
+    const dropLast = d.slice(0, -1);
+    const matches = longerWithSource.filter((r) => r.value === d);
+    const frontWitnessed = exactLength.includes(dropFirst);
+    const backWitnessed = exactLength.includes(dropLast);
+    if (frontWitnessed && !backWitnessed) {
+      matches.forEach(({ source }) => valid.push({ value: dropFirst, source }));
+    } else if (backWitnessed && !frontWitnessed) {
+      matches.forEach(({ source }) => valid.push({ value: dropLast, source }));
+    } else if (!frontWitnessed && !backWitnessed && matches.length >= 2) {
+      // No independent exact-length scale witnessed either trim — but this
+      // same length+1 value showed up on its own more than once (e.g. all
+      // 3 untouched-raw scales agreeing on it), which is itself a real
+      // signal something's there, just not which end is the stray digit.
+      // Adding BOTH trims as competing candidates, not picking one, means
+      // a genuine front-vs-back ambiguity becomes a tie (safe/ambiguous)
+      // below rather than an arbitrary guess — while a case where one
+      // direction is ALSO independently reinforced by another group (the
+      // whiteout-processed scales, say) still lets that direction win on
+      // the numbers, or lets the raw-preference tie-break below decide it.
+      matches.forEach(({ source }) => {
+        valid.push({ value: dropFirst, source, siblingOf: d, isFrontTrim: true });
+        valid.push({ value: dropLast, source, siblingOf: d, isFrontTrim: false });
+      });
+    }
+  }
   if (!valid.length) {
     // No scale reached the expected digit count. If most readings came
     // back genuinely empty, that's a blank box — safe to report "not
@@ -933,12 +1166,78 @@ async function ocrTaxIdDigits(worker, canvas, bbox, expectedLength) {
     // signal alone, and an incorrect tax ID being the worse outcome by
     // far, this stays biased toward flagging ambiguous over guessing.
     const nonEmpty = results.filter((d) => d.length > 0);
-    return nonEmpty.length >= 2 ? null : '';
+    return { value: nonEmpty.length >= 2 ? null : '', candidate: '' };
   }
 
   const counts = new Map();
-  valid.forEach((d) => counts.set(d, (counts.get(d) || 0) + 1));
-  const [bestValue, bestCount] = [...counts.entries()].reduce((best, cur) => (cur[1] > best[1] ? cur : best));
+  const sources = new Map(); // value -> Set of sources that voted for it
+  const siblingInfo = new Map(); // value -> { siblingOf, isFrontTrim } (only for front/back trim candidates)
+  valid.forEach(({ value, source, siblingOf, isFrontTrim }) => {
+    counts.set(value, (counts.get(value) || 0) + 1);
+    if (!sources.has(value)) sources.set(value, new Set());
+    sources.get(value).add(source);
+    if (siblingOf !== undefined) siblingInfo.set(value, { siblingOf, isFrontTrim });
+  });
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const [bestValue, bestCount] = ranked[0];
+  const runnerUpCount = ranked[1] ? ranked[1][1] : 0;
+
+  // With 6 total votes (3 scales × {whiteout, raw}), a tie between the top
+  // two values is exactly the signature of the whiteout preprocessing
+  // itself being the source of disagreement — e.g. 3 whiteout-processed
+  // scales agreeing on one digit shape against 3 untouched-raw scales
+  // agreeing on a different one (verified against a real case where
+  // whiteout biased an open "6" into reading as a closed "8"). When
+  // that's exactly the shape of the tie — the top value came only from
+  // whiteout-processed scales, the runner-up only from untouched-raw ones
+  // — it's resolved in favor of raw rather than left ambiguous: whiteout
+  // is a heuristic patch layered on top of the actual pixels, and it's
+  // been measured distorting a real digit's shape into a different valid
+  // digit; raw has no equivalent failure mode measured against it, since
+  // its only known weakness is losing information (reading empty or a
+  // wrong length) rather than confidently misreading a clean digit as a
+  // different one. A tie that ISN'T cleanly whiteout-only vs raw-only
+  // (either side mixes sources, or there's a genuine 3-way split) still
+  // falls through to ambiguous below — this only ever resolves the one
+  // specific failure signature it was measured against.
+  let isTie = runnerUpCount > 0 && runnerUpCount === bestCount;
+  let winner = bestValue;
+  if (isTie) {
+    const runnerUpValue = ranked[1][0];
+    const bestSources = sources.get(bestValue);
+    const runnerUpSources = sources.get(runnerUpValue);
+    const bestIsWhiteoutOnly = bestSources.size === 1 && bestSources.has('whiteout');
+    const runnerUpIsRawOnly = runnerUpSources.size === 1 && runnerUpSources.has('raw');
+    if (bestIsWhiteoutOnly && runnerUpIsRawOnly) {
+      winner = runnerUpValue;
+      isTie = false;
+    } else {
+      const runnerUpIsWhiteoutOnly = runnerUpSources.size === 1 && runnerUpSources.has('whiteout');
+      const bestIsRawOnly = bestSources.size === 1 && bestSources.has('raw');
+      if (runnerUpIsWhiteoutOnly && bestIsRawOnly) {
+        isTie = false; // bestValue (raw) already wins as-is
+      } else {
+        // The other resolvable shape: the tie is between the front-trim
+        // and back-trim of the very SAME self-corroborated length+1
+        // reading (no whiteout involvement either way — e.g. whiteout
+        // found nothing usable at all). The crop geometry itself makes
+        // one direction more likely than the other: the wideLeft variant
+        // reaches a full row-width further left to recover a digit
+        // clipped at the box's own left edge, while the right side is
+        // only extended by half a row-width — so a stray character
+        // bleeding in from OUTSIDE the box is structurally more likely to
+        // land at the front of the reading than the back. Verified
+        // against three independent cases, all with the stray digit at
+        // the front and none with it at the back.
+        const bestSib = siblingInfo.get(bestValue);
+        const runnerUpSib = siblingInfo.get(runnerUpValue);
+        if (bestSib && runnerUpSib && bestSib.siblingOf === runnerUpSib.siblingOf) {
+          winner = bestSib.isFrontTrim ? bestValue : runnerUpValue;
+          isTie = false;
+        }
+      }
+    }
+  }
 
   // A lone scale's reading, unconfirmed by any other, isn't corroborated —
   // same reasoning as requiring both wideLeft/detected crops to agree one
@@ -955,8 +1254,9 @@ async function ocrTaxIdDigits(worker, canvas, bbox, expectedLength) {
   // majority reads into "uncertain" for every one confidently-wrong
   // majority it caught. Without another independent signal to break a
   // 2-1 split correctly, majority is the better bet on the whole corpus.
-  return bestCount >= 2 ? bestValue : null;
+  return { value: bestCount >= 3 && !isTie ? winner : null, candidate: bestValue };
 }
+
 
 async function tinDigitsFromCrop(cropCanvas) {
   if (!cropCanvas) return { ssn: '', ein: '' };
@@ -975,13 +1275,13 @@ async function tinDigitsFromCrop(cropCanvas) {
     tessedit_char_whitelist: '0123456789-',
     tessedit_pageseg_mode: '6',
   });
-  const [ssn, ein] = await Promise.all([
+  const [ssnResult, einResult] = await Promise.all([
     ocrTaxIdDigits(digitWorker, cropCanvas, ssnBbox, 9),
     ocrTaxIdDigits(digitWorker, cropCanvas, einBbox, 9),
   ]);
   await digitWorker.terminate();
 
-  return { ssn, ein };
+  return { ssn: ssnResult.value, ein: einResult.value, ssnCandidate: ssnResult.candidate, einCandidate: einResult.candidate };
 }
 
 // Primary: crop around the SSN/EIN labels wherever findTinCropRegion locates
@@ -1018,6 +1318,20 @@ async function ocrTinBoxDigits(canvas, pageLines) {
       if ((fallback.ssn || '').length === 9) {
         ssn = fallback.ssn;
         source = dynamic ? 'dynamic-anchor+fixed-region' : 'fixed-region';
+      } else if (
+        dynamic &&
+        primary.ssnCandidate &&
+        primary.ssnCandidate.length === 9 &&
+        primary.ssnCandidate === fallback.ssnCandidate
+      ) {
+        // Neither tier's own 3 scales reached a 2-of-3 majority on its
+        // own, but the dynamic-anchor crop and the fixed-region crop are
+        // two independently sourced images of the same box — if their
+        // single best (otherwise-unconfirmed) guesses agree with each
+        // other, that's real corroboration a single tier's internal vote
+        // count couldn't provide by itself.
+        ssn = primary.ssnCandidate;
+        source = 'dynamic-anchor+fixed-region-cross-confirmed';
       } else if (ssn === null || fallback.ssn === null) {
         ssn = null;
       }
@@ -1026,6 +1340,14 @@ async function ocrTinBoxDigits(canvas, pageLines) {
       if ((fallback.ein || '').length === 9) {
         ein = fallback.ein;
         source = dynamic ? 'dynamic-anchor+fixed-region' : 'fixed-region';
+      } else if (
+        dynamic &&
+        primary.einCandidate &&
+        primary.einCandidate.length === 9 &&
+        primary.einCandidate === fallback.einCandidate
+      ) {
+        ein = primary.einCandidate;
+        source = 'dynamic-anchor+fixed-region-cross-confirmed';
       } else if (ein === null || fallback.ein === null) {
         ein = null;
       }
@@ -1418,15 +1740,31 @@ function parseAddressBoxText(rawText) {
   // truncating it out of the street text. A single digit immediately
   // followed by whitespace can't match "4B" (the "B" blocks it) but still
   // catches the real line-number and its common OCR misreads (6 -> 5/3/8).
-  const CITY_ZIP_LABEL_RE = new RegExp('(?:\\d\\s+)?(?:city\\s*[,.:]?\\s*)?' + STATE_ZIP_CODE_PATTERN + '\\.?', 'i');
+  // The digit also needs a negative lookbehind for another digit right
+  // before it: without one, this "single bare digit" shape happily matches
+  // just the LAST digit of a multi-digit suite number sitting right before
+  // this label ("Suite 240" + "City..." lets "0 " alone satisfy the
+  // group), truncating the real suite number out of the street text same
+  // as the unit-number bug this was written to avoid in the first place.
+  const CITY_ZIP_LABEL_RE = new RegExp(
+    '(?:(?<!\\d)\\d\\s+)?(?:city\\s*[,.:]?\\s*)?' + STATE_ZIP_CODE_PATTERN + '\\.?',
+    'i'
+  );
 
-  // Each word required to start uppercase, rather than any letter: real
-  // city names are always Title Case, and requiring that rejects a run of
-  // OCR noise sitting between the label and the real city (a stray
-  // lowercase-led fragment like "I se CR" right before "Atlanta") that the
-  // fully permissive [A-Za-z ...] version would otherwise happily swallow
-  // into the captured city name as if it were the start of it.
-  const CITY_STATE_ZIP_RE = /((?:[A-Z][A-Za-z'.-]*\s*)+?),?\s+([A-Za-z]{2})\s*(\d{5}(?:-\d{4})?)/;
+  // Each word required to be Title Case — capital first letter, at least
+  // one lowercase letter after — rather than any-case-after-the-first:
+  // real city names are always Title Case, and requiring that rejects a
+  // run of OCR noise sitting between the label and the real city. A
+  // lowercase-led fragment like "I se CR" gets rejected by the
+  // leading-capital rule, but an ALL-CAPS noise token like "CR" needs the
+  // *-vs-+ distinction to actually get rejected: with `*` (zero or more
+  // lowercase), each of "C" and "R" alone still satisfies "one capital
+  // plus zero-or-more lowercase", so the two letters can each anchor their
+  // own one-letter "word" and chain together as if they were a real
+  // two-word city name. Requiring at least one lowercase letter (`+`, not
+  // `*`) after the capital blocks that, since no real single-letter word
+  // can start a city name here.
+  const CITY_STATE_ZIP_RE = /((?:[A-Z][a-z'.-]+\s*)+?),?\s+([A-Za-z]{2})\s*(\d{5}(?:-\d{4})?)/;
 
   const addressLabelMatch = text.match(ADDRESS_LABEL_RE);
   const afterAddressLabel = addressLabelMatch ? text.slice(addressLabelMatch.index + addressLabelMatch[0].length) : text;
@@ -1883,6 +2221,26 @@ function setStatus(message, isError = false) {
   }
 }
 
+// Messages about generating/finalizing the MSA document surface next to the
+// document preview (right side) instead of the left-side status line, since
+// that's the panel they actually describe. An error here also opens the
+// preview panel — it's easy to miss otherwise, since the panel is closed by
+// default and this message can be the only explanation for why the wizard
+// didn't advance.
+function setPreviewStatus(message, isError = false) {
+  previewStatus.textContent = message;
+  previewStatus.classList.toggle('error', isError);
+
+  previewStatus.classList.remove('flash');
+  void previewStatus.offsetWidth;
+  previewStatus.classList.add('flash');
+
+  if (isError) {
+    setPreviewPanelOpen(true);
+    setActivePreviewTab('generated');
+  }
+}
+
 const MSA_TEMPLATE_PLACEHOLDERS = {
   companyName: 'APTIVA CORP',
   taxId: '26-1282577',
@@ -2086,7 +2444,7 @@ async function insertDataAndAdvance() {
     const autoReplacements = buildAutoReplacements(extractedW9Data);
     const { bytes: docxBytes, replacedCount } = await applyDocxReplacements(msaTemplateDocxFile, autoReplacements);
     success = replacedCount > 0;
-    setStatus(
+    setPreviewStatus(
       success
         ? 'MSA template filled with the extracted W-9 data. Continuing to manual details.'
         : "The MSA template doesn't contain the expected placeholder text, so nothing was auto-replaced.",
@@ -2101,7 +2459,7 @@ async function insertDataAndAdvance() {
       }
     }
   } catch (err) {
-    setStatus(`Could not prepare the MSA template: ${err.message}`, true);
+    setPreviewStatus(`Could not prepare the MSA template: ${err.message}`, true);
   } finally {
     await waitRemaining(startedAt, MIN_LOADING_MS);
     hideWizardLoading();
@@ -2153,9 +2511,21 @@ function validateManualFields() {
   return valid;
 }
 
+function setManualFieldsStatus(message, isError = false) {
+  manualFieldsStatus.textContent = message;
+  manualFieldsStatus.classList.toggle('error', isError);
+
+  manualFieldsStatus.classList.remove('flash');
+  void manualFieldsStatus.offsetWidth;
+  manualFieldsStatus.classList.add('flash');
+}
+
 MANUAL_FIELD_INPUTS.forEach((el) => {
   el.addEventListener('input', () => {
-    if (el.value.trim()) el.classList.remove('field-error');
+    if (el.value.trim()) {
+      el.classList.remove('field-error');
+      if (MANUAL_FIELD_INPUTS.every((f) => f.value.trim())) setManualFieldsStatus('');
+    }
     scheduleLivePreviewUpdate();
   });
 });
@@ -2170,9 +2540,10 @@ applyManualBtn.addEventListener('click', async () => {
   let success = false;
   try {
     if (!validateManualFields()) {
-      setStatus('Please fill in all manual details before applying.', true);
+      setManualFieldsStatus('Please fill in all manual details before applying.', true);
       return;
     }
+    setManualFieldsStatus('');
 
     const manualValues = {
       rep: manualRep.value.trim(),
@@ -2203,10 +2574,10 @@ applyManualBtn.addEventListener('click', async () => {
     setGeneratedFiles(pdfBlob, wordBlob, baseName);
     await setDocumentPreview(docxBytes);
 
-    setStatus('Manual details applied and the MSA is finalized. Ready to download.');
+    setPreviewStatus('Manual details applied and the MSA is finalized. Ready to download.');
     success = true;
   } catch (err) {
-    setStatus(`Could not finalize the MSA: ${err.message}`, true);
+    setPreviewStatus(`Could not finalize the MSA: ${err.message}`, true);
   } finally {
     await waitRemaining(startedAt, MIN_LOADING_MS);
     hideWizardLoading();
@@ -2272,6 +2643,11 @@ function resetWizardForNewDocument() {
   downloadWordBtn.disabled = true;
 
   clearDocumentPreview();
+  clearW9Preview();
+  setActivePreviewTab('generated');
+  previewStatus.textContent = '';
+  previewStatus.classList.remove('error');
+  setManualFieldsStatus('');
   setStatus('Ready for a new document.');
   showWizardStep(1);
 }
@@ -2281,6 +2657,7 @@ startNewBtn.addEventListener('click', resetWizardForNewDocument);
 const previewToggleBtn = document.getElementById('previewToggleBtn');
 const previewToggleLabel = document.getElementById('previewToggleLabel');
 const previewPanel = document.getElementById('previewPanel');
+const previewStatus = document.getElementById('previewStatus');
 const previewEmptyState = document.getElementById('previewEmptyState');
 const previewLoading = document.getElementById('previewLoading');
 const previewZoomControls = document.getElementById('previewZoomControls');
@@ -2288,8 +2665,16 @@ const previewZoomOutBtn = document.getElementById('previewZoomOutBtn');
 const previewZoomInBtn = document.getElementById('previewZoomInBtn');
 const previewZoomLevel = document.getElementById('previewZoomLevel');
 const previewFrame = document.getElementById('previewFrame');
+const previewTabGenerated = document.getElementById('previewTabGenerated');
+const previewTabW9 = document.getElementById('previewTabW9');
+const previewViewGenerated = document.getElementById('previewViewGenerated');
+const previewViewW9 = document.getElementById('previewViewW9');
+const w9PreviewEmptyState = document.getElementById('w9PreviewEmptyState');
+const w9PreviewLoading = document.getElementById('w9PreviewLoading');
+const w9PreviewPages = document.getElementById('w9PreviewPages');
+const w9PreviewImage = document.getElementById('w9PreviewImage');
 
-const PREVIEW_ZOOM_MIN = 0.4;
+const PREVIEW_ZOOM_MIN = 0.3;
 const PREVIEW_ZOOM_MAX = 2;
 const PREVIEW_ZOOM_STEP = 0.1;
 let previewZoom = 1;
@@ -2346,8 +2731,14 @@ function zoomPreviewAtCenter(zoom, animate) {
   zoomPreviewAt(zoom, previewFrame.clientWidth / 2, previewFrame.clientHeight / 2, animate);
 }
 
-previewZoomOutBtn.addEventListener('click', () => zoomPreviewAtCenter(previewZoom - PREVIEW_ZOOM_STEP, true));
-previewZoomInBtn.addEventListener('click', () => zoomPreviewAtCenter(previewZoom + PREVIEW_ZOOM_STEP, true));
+previewZoomOutBtn.addEventListener('click', () => {
+  if (activePreviewTab === 'w9') zoomW9PreviewAtCenter(w9PreviewZoom - PREVIEW_ZOOM_STEP, true);
+  else zoomPreviewAtCenter(previewZoom - PREVIEW_ZOOM_STEP, true);
+});
+previewZoomInBtn.addEventListener('click', () => {
+  if (activePreviewTab === 'w9') zoomW9PreviewAtCenter(w9PreviewZoom + PREVIEW_ZOOM_STEP, true);
+  else zoomPreviewAtCenter(previewZoom + PREVIEW_ZOOM_STEP, true);
+});
 
 function writeIframeShell(iframe) {
   const doc = iframe.contentDocument;
@@ -2461,7 +2852,7 @@ async function setDocumentPreview(docxBytes) {
     applyPreviewZoom(false);
     attachDragPan(doc);
     attachWheelZoom(doc);
-    previewZoomControls.hidden = false;
+    previewZoomControls.hidden = activePreviewTab !== 'generated';
     previewFrame.classList.remove('is-ready');
     requestAnimationFrame(() => previewFrame.classList.add('is-ready'));
   } finally {
@@ -2488,6 +2879,243 @@ function setPreviewPanelOpen(open) {
 previewToggleBtn.addEventListener('click', () => {
   setPreviewPanelOpen(!previewPanel.classList.contains('is-open'));
 });
+
+let activePreviewTab = 'generated';
+
+function refreshPreviewZoomControlsVisibility() {
+  previewZoomControls.hidden =
+    activePreviewTab === 'generated' ? !previewFrame.classList.contains('is-ready') : w9PreviewPages.hidden;
+  previewZoomLevel.textContent = `${Math.round((activePreviewTab === 'w9' ? w9PreviewZoom : previewZoom) * 100)}%`;
+}
+
+function setActivePreviewTab(tab) {
+  activePreviewTab = tab;
+  previewTabGenerated.classList.toggle('is-active', tab === 'generated');
+  previewTabGenerated.setAttribute('aria-selected', String(tab === 'generated'));
+  previewTabW9.classList.toggle('is-active', tab === 'w9');
+  previewTabW9.setAttribute('aria-selected', String(tab === 'w9'));
+  previewViewGenerated.hidden = tab !== 'generated';
+  previewViewW9.hidden = tab !== 'w9';
+  refreshPreviewZoomControlsVisibility();
+}
+
+previewTabGenerated.addEventListener('click', () => setActivePreviewTab('generated'));
+previewTabW9.addEventListener('click', () => setActivePreviewTab('w9'));
+
+const W9_PREVIEW_ZOOM_MIN = 0.3;
+const W9_PREVIEW_ZOOM_MAX = 2;
+let w9PreviewZoom = 1;
+
+function getW9ZoomTargets() {
+  const canvases = Array.from(w9PreviewPages.querySelectorAll('canvas.w9-preview-page'));
+  if (canvases.length) return canvases;
+  return w9PreviewImage.hidden ? [] : [w9PreviewImage];
+}
+
+// The "natural" (100%-zoom) display size. For a canvas this is NOT its raw
+// pixel buffer — that's rendered at a higher resolution than 100% display
+// size on purpose (see W9_PDF_RENDER_OVERSAMPLE), so zooming in via CSS still
+// has real pixel detail behind it instead of just stretching a blurrier image.
+function w9NaturalSize(el) {
+  if (el.tagName === 'CANVAS') {
+    return { w: Number(el.dataset.naturalWidth) || el.width, h: Number(el.dataset.naturalHeight) || el.height };
+  }
+  return { w: el.naturalWidth || el.clientWidth, h: el.naturalHeight || el.clientHeight };
+}
+
+// Each page/image is resized directly (rather than transform-scaling one
+// shared wrapper, the way the MSA docx preview does) since the W-9 preview
+// can hold several independently-sized canvases stacked with gaps between
+// them — there's no single natural width/height to scale as one unit.
+function applyW9PreviewZoom(animate) {
+  getW9ZoomTargets().forEach((el) => {
+    const { w, h } = w9NaturalSize(el);
+    el.style.transition = animate ? 'width 0.15s ease, height 0.15s ease' : 'none';
+    el.style.width = `${w * w9PreviewZoom}px`;
+    el.style.height = `${h * w9PreviewZoom}px`;
+  });
+  if (activePreviewTab === 'w9') previewZoomLevel.textContent = `${Math.round(w9PreviewZoom * 100)}%`;
+}
+
+function setW9PreviewZoom(zoom, animate) {
+  w9PreviewZoom = Math.min(W9_PREVIEW_ZOOM_MAX, Math.max(W9_PREVIEW_ZOOM_MIN, zoom));
+  applyW9PreviewZoom(animate);
+}
+
+// Approximate cursor-anchored zoom: assumes a roughly uniform scale factor
+// across whatever page is currently under the cursor. Good enough for a
+// form that's usually one or two pages — attachDragPan lets the user
+// correct any drift by hand.
+function zoomW9PreviewAt(zoom, cursorX, cursorY, animate) {
+  const scroller = w9PreviewPages;
+  const oldZoom = w9PreviewZoom || 1;
+  const docX = (scroller.scrollLeft + cursorX) / oldZoom;
+  const docY = (scroller.scrollTop + cursorY) / oldZoom;
+
+  setW9PreviewZoom(zoom, animate);
+
+  scroller.scrollLeft = docX * w9PreviewZoom - cursorX;
+  scroller.scrollTop = docY * w9PreviewZoom - cursorY;
+}
+
+function zoomW9PreviewAtCenter(zoom, animate) {
+  zoomW9PreviewAt(zoom, w9PreviewPages.clientWidth / 2, w9PreviewPages.clientHeight / 2, animate);
+}
+
+function attachW9DragPan() {
+  const scroller = w9PreviewPages;
+  let dragging = false;
+  let pointerId = null;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+
+  scroller.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    pointerId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = scroller.scrollLeft;
+    startTop = scroller.scrollTop;
+    scroller.classList.add('is-dragging');
+    try {
+      scroller.setPointerCapture(pointerId);
+    } catch {
+      // Pointer capture is a nice-to-have for dragging past the frame edge; ignore if unsupported.
+    }
+    e.preventDefault();
+  });
+
+  scroller.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    scroller.scrollLeft = startLeft - (e.clientX - startX);
+    scroller.scrollTop = startTop - (e.clientY - startY);
+  });
+
+  const stopDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    scroller.classList.remove('is-dragging');
+    try {
+      if (pointerId !== null) scroller.releasePointerCapture(pointerId);
+    } catch {
+      // Already released or unsupported; nothing to do.
+    }
+  };
+  scroller.addEventListener('pointerup', stopDrag);
+  scroller.addEventListener('pointercancel', stopDrag);
+  scroller.addEventListener('pointerleave', (e) => {
+    if (pointerId === null || !scroller.hasPointerCapture?.(pointerId)) stopDrag(e);
+  });
+
+  scroller.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const rect = scroller.getBoundingClientRect();
+      const step = Math.min(0.15, Math.max(0.01, Math.abs(e.deltaY) / 200));
+      zoomW9PreviewAt(w9PreviewZoom + (e.deltaY < 0 ? step : -step), e.clientX - rect.left, e.clientY - rect.top, false);
+    },
+    { passive: false }
+  );
+
+  scroller.addEventListener('dblclick', (e) => {
+    const rect = scroller.getBoundingClientRect();
+    const target = w9PreviewZoom >= W9_PREVIEW_ZOOM_MAX - 0.1 ? 1 : w9PreviewZoom + 0.2;
+    zoomW9PreviewAt(target, e.clientX - rect.left, e.clientY - rect.top, true);
+  });
+}
+
+attachW9DragPan();
+
+let w9PreviewObjectUrl = null;
+let w9PreviewRequestId = 0;
+
+function clearW9Preview() {
+  w9PreviewRequestId++;
+  if (w9PreviewObjectUrl) {
+    URL.revokeObjectURL(w9PreviewObjectUrl);
+    w9PreviewObjectUrl = null;
+  }
+  w9PreviewPages.hidden = true;
+  w9PreviewPages.querySelectorAll('canvas.w9-preview-page').forEach((c) => c.remove());
+  w9PreviewImage.hidden = true;
+  w9PreviewImage.removeAttribute('src');
+  w9PreviewImage.style.removeProperty('width');
+  w9PreviewImage.style.removeProperty('height');
+  w9PreviewLoading.hidden = true;
+  w9PreviewEmptyState.hidden = false;
+  w9PreviewZoom = 1;
+  if (activePreviewTab === 'w9') refreshPreviewZoomControlsVisibility();
+}
+
+// Rendered at more pixels than the 100%-zoom display size calls for, so
+// zooming in (up to W9_PREVIEW_ZOOM_MAX) via CSS width/height still draws on
+// real detail instead of stretching an already-100%-sized bitmap into a
+// blurry mess — the zoom used to *report* a bigger percentage without the
+// page actually looking any bigger or sharper.
+const W9_PDF_RENDER_OVERSAMPLE = W9_PREVIEW_ZOOM_MAX;
+
+// The browser's built-in PDF plugin (what an <iframe src="blob:...pdf">
+// relies on) isn't guaranteed to be available or enabled, so it can render
+// as a silently blank frame with no error to catch. Rendering PDF pages to
+// canvas via pdf.js — already a dependency, already used for W-9 OCR —
+// works the same way everywhere instead of depending on that plugin.
+async function renderW9PdfPreview(file, requestId) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  if (requestId !== w9PreviewRequestId) return;
+
+  const baseScale = 1.5;
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const displayViewport = page.getViewport({ scale: baseScale });
+    const renderViewport = page.getViewport({ scale: baseScale * W9_PDF_RENDER_OVERSAMPLE });
+    const canvas = document.createElement('canvas');
+    canvas.className = 'w9-preview-page';
+    canvas.width = renderViewport.width;
+    canvas.height = renderViewport.height;
+    canvas.dataset.naturalWidth = displayViewport.width;
+    canvas.dataset.naturalHeight = displayViewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: renderViewport }).promise;
+    if (requestId !== w9PreviewRequestId) return;
+    w9PreviewPages.appendChild(canvas);
+  }
+  applyW9PreviewZoom(false);
+}
+
+async function renderW9Preview(file) {
+  clearW9Preview();
+  if (!file) return;
+
+  const requestId = w9PreviewRequestId;
+  w9PreviewEmptyState.hidden = true;
+
+  if (isImageFile(file)) {
+    w9PreviewObjectUrl = URL.createObjectURL(file);
+    w9PreviewImage.src = w9PreviewObjectUrl;
+    w9PreviewImage.hidden = false;
+    w9PreviewPages.hidden = false;
+    if (activePreviewTab === 'w9') refreshPreviewZoomControlsVisibility();
+    return;
+  }
+
+  w9PreviewLoading.hidden = false;
+  try {
+    await renderW9PdfPreview(file, requestId);
+    if (requestId !== w9PreviewRequestId) return;
+    w9PreviewPages.hidden = false;
+    if (activePreviewTab === 'w9') refreshPreviewZoomControlsVisibility();
+  } catch {
+    if (requestId !== w9PreviewRequestId) return;
+    w9PreviewEmptyState.hidden = false;
+  } finally {
+    if (requestId === w9PreviewRequestId) w9PreviewLoading.hidden = true;
+  }
+}
 
 const HISTORY_DB_NAME = 'documentGeneratorHistory';
 const HISTORY_STORE = 'generatedDocuments';
