@@ -94,7 +94,7 @@ const W9_DEBUG = (() => {
 // overlay/trace — never contains extracted digits or address text.
 let debugExtractionTrace = null;
 function resetDebugTrace() {
-  debugExtractionTrace = W9_DEBUG ? { tin: {}, address: {} } : null;
+  debugExtractionTrace = W9_DEBUG ? { tin: {}, address: {}, rotationDegrees: 0, orientationConfidence: null } : null;
 }
 
 function showWizardStep(n) {
@@ -509,13 +509,7 @@ const DESKEW_STEP_DEG = 1;
 const DESKEW_SAMPLE_MAX_DIM = 700;
 
 function downscaleForAnalysis(source) {
-  const scale = Math.min(1, DESKEW_SAMPLE_MAX_DIM / Math.max(source.width, source.height));
-  if (scale >= 1) return source;
-  const out = document.createElement('canvas');
-  out.width = Math.round(source.width * scale);
-  out.height = Math.round(source.height * scale);
-  out.getContext('2d').drawImage(source, 0, 0, out.width, out.height);
-  return out;
+  return downscaleTo(source, DESKEW_SAMPLE_MAX_DIM);
 }
 
 function rowProfileVariance(canvas, angleDeg) {
@@ -586,8 +580,12 @@ const TESSERACT_VENDORED_PATHS = {
   langPath: './vendor/tesseract',
 };
 
-async function ocrLinesWithBoxes(canvas) {
+// Used exclusively for the SSN/EIN crop's label/row detection (see
+// tinDigitsFromCrop). pageSegMode defaults to Tesseract's own default (PSM
+// 3, fully-automatic) when omitted.
+async function ocrLinesWithBoxes(canvas, pageSegMode) {
   const worker = await Tesseract.createWorker('eng', undefined, TESSERACT_VENDORED_PATHS);
+  if (pageSegMode) await worker.setParameters({ tessedit_pageseg_mode: pageSegMode });
   const result = await worker.recognize(canvas, {}, { blocks: true });
   await worker.terminate();
   return linesFromBlocks(result.data.blocks);
@@ -600,6 +598,93 @@ function linesFromBlocks(blocks) {
   );
   lines.sort((a, b) => a.bbox.y0 - b.bbox.y0);
   return lines;
+}
+
+// --- Page orientation (0/90/180/270) ---------------------------------------
+// deskewCanvas above only straightens a slight (<=8deg) scanning skew; it
+// can't recover a page that was fed into the scanner sideways or upside
+// down. This mirrors the reference pipeline's orientation step: OCR a small
+// header/name-band crop at each right-angle rotation and keep whichever
+// orientation reads with the highest average word confidence — a page
+// OCR'd in the wrong orientation reads as near-random noise, so confidence
+// drops sharply, while the correct orientation reads cleanly.
+const ORIENTATION_DEGREES = [0, 90, 180, 270];
+// Fraction-of-page crop covering the header/entity-name band — present and
+// legible near the top of every W-9 regardless of layout drift, and small
+// enough that probing it four times stays cheap.
+const ORIENTATION_PROBE_REGION = { x0: 0.03, x1: 0.98, y0: 0.02, y1: 0.24 };
+
+function rotateCanvasExpand(source, degrees) {
+  if (degrees % 360 === 0) return source;
+  const rad = (degrees * Math.PI) / 180;
+  const swapDims = degrees % 180 !== 0;
+  const w = source.width;
+  const h = source.height;
+  const out = document.createElement('canvas');
+  out.width = swapDims ? h : w;
+  out.height = swapDims ? w : h;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.translate(out.width / 2, out.height / 2);
+  ctx.rotate(rad);
+  ctx.drawImage(source, -w / 2, -h / 2);
+  return out;
+}
+
+// PDF pages are rendered at 3x scale before this runs, so the full-size
+// canvas is large; rotating and OCR'ing that four times over (once per
+// candidate orientation) is expensive enough to create real memory/CPU
+// pressure right before the actual extraction OCR passes that follow —
+// measured as a regression on at least one low-quality fixture where the
+// real OCR pass came back worse purely from that added load, despite the
+// orientation choice itself (0deg) being correct. Probing on a small
+// downscaled copy instead keeps all four probes cheap; the expensive
+// full-resolution rotate then runs at most once, only for the orientation
+// actually chosen (and not at all when that's 0deg).
+const ORIENTATION_PROBE_MAX_DIM = 1200;
+
+function downscaleTo(source, maxDim) {
+  const scale = Math.min(1, maxDim / Math.max(source.width, source.height));
+  if (scale >= 1) return source;
+  const out = document.createElement('canvas');
+  out.width = Math.round(source.width * scale);
+  out.height = Math.round(source.height * scale);
+  out.getContext('2d').drawImage(source, 0, 0, out.width, out.height);
+  return out;
+}
+
+// Runs all four orientation probes on a single shared worker (spinning up a
+// Tesseract worker, not the recognize call itself, is the expensive part),
+// so this stays one extra pass rather than four full ones. Ties keep the
+// earliest-tried orientation (0 first), so an ambiguous/blank page is left
+// unrotated rather than flipped on a coin toss.
+async function pickBestOrientation(rawCanvas) {
+  const probeBase = downscaleTo(rawCanvas, ORIENTATION_PROBE_MAX_DIM);
+  const worker = await Tesseract.createWorker('eng', undefined, TESSERACT_VENDORED_PATHS);
+  let bestDegrees = 0;
+  let bestConfidence = -1;
+
+  for (const degrees of ORIENTATION_DEGREES) {
+    const candidate = rotateCanvasExpand(probeBase, degrees);
+    const probe = cropCanvasRegion(candidate, ORIENTATION_PROBE_REGION, 1);
+    if (!probe) continue;
+    const preprocessed = grayscaleContrastCanvas(probe);
+    const result = await worker.recognize(preprocessed, {}, { blocks: true });
+    const lines = linesFromBlocks(result.data.blocks);
+    const confidences = lines
+      .map((l) => l.confidence)
+      .filter((c) => typeof c === 'number' && c >= 0);
+    const confidence = confidences.length ? confidences.reduce((a, b) => a + b, 0) / confidences.length : 0;
+    if (confidence > bestConfidence) {
+      bestConfidence = confidence;
+      bestDegrees = degrees;
+    }
+  }
+
+  await worker.terminate();
+  const canvas = bestDegrees === 0 ? rawCanvas : rotateCanvasExpand(rawCanvas, bestDegrees);
+  return { canvas, degrees: bestDegrees, confidence: bestConfidence };
 }
 
 function findDigitRowBelow(lines, labelPattern) {
@@ -1260,12 +1345,42 @@ async function ocrTaxIdDigits(worker, canvas, bbox, expectedLength) {
 
 async function tinDigitsFromCrop(cropCanvas) {
   if (!cropCanvas) return { ssn: '', ein: '' };
-  const lines = await ocrLinesWithBoxes(cropCanvas);
-  const ssnBbox =
+  let lines = await ocrLinesWithBoxes(cropCanvas);
+  let ssnBbox =
     findDigitRowBelow(lines, loose('Social security number')) || findDigitRowByPosition(lines, SSN_ROW_Y_BAND);
-  const einBbox =
+  let einBbox =
     findDigitRowBelow(lines, loose('Employer identification number')) ||
     findDigitRowByPosition(lines, EIN_ROW_Y_BAND);
+
+  // Default page segmentation (PSM 3) analyzes the crop's overall layout
+  // before deciding what counts as a text line — and a bordered digit-box
+  // table sitting right next to a paragraph of prose is exactly the kind of
+  // mixed layout that mode can misjudge, silently swallowing the bold
+  // "Social security number"/"Employer identification number" header text
+  // above the table into whatever it decided the table region was (verified
+  // against a real crop where that header text never appeared in the OCR'd
+  // lines at all despite being clearly legible). Sparse-text mode (PSM 11)
+  // recovers that — but only worth reaching for when the default mode found
+  // NEITHER label anywhere: PSM 11 skips layout analysis entirely, which can
+  // just as easily fragment an otherwise-clean wide digit row into pieces too
+  // narrow to pass findDigitRowBelow's width check on a page where the
+  // default mode was already working fine (verified as a real regression on
+  // a different document). Trying it only as a fallback, not unconditionally,
+  // keeps each mode's failure case from undoing the other's success.
+  if (!ssnBbox && !einBbox) {
+    const sparseLines = await ocrLinesWithBoxes(cropCanvas, '11');
+    const sparseSsnBbox =
+      findDigitRowBelow(sparseLines, loose('Social security number')) ||
+      findDigitRowByPosition(sparseLines, SSN_ROW_Y_BAND);
+    const sparseEinBbox =
+      findDigitRowBelow(sparseLines, loose('Employer identification number')) ||
+      findDigitRowByPosition(sparseLines, EIN_ROW_Y_BAND);
+    if (sparseSsnBbox || sparseEinBbox) {
+      lines = sparseLines;
+      ssnBbox = sparseSsnBbox;
+      einBbox = sparseEinBbox;
+    }
+  }
 
   // One worker for every digit-OCR attempt this crop needs (up to a couple
   // dozen, across SSN/EIN × 3 scales × 2 crop variants) instead of one per
@@ -1430,10 +1545,16 @@ async function ocrPageWithLines(canvas, onProgress) {
 
 async function ocrImageFile(file, onProgress) {
   resetDebugTrace();
-  const rawCanvas = await imageFileToCanvas(file);
-  const canvas = deskewCanvas(rawCanvas);
+  const loadedCanvas = await imageFileToCanvas(file);
+  const { canvas: orientedCanvas, degrees: rotationDegrees, confidence: orientationConfidence } =
+    await pickBestOrientation(loadedCanvas);
+  const canvas = deskewCanvas(orientedCanvas);
   const ocrCanvas = grayscaleContrastCanvas(canvas);
-  if (debugExtractionTrace) debugExtractionTrace.canvas = canvas;
+  if (debugExtractionTrace) {
+    debugExtractionTrace.canvas = canvas;
+    debugExtractionTrace.rotationDegrees = rotationDegrees;
+    debugExtractionTrace.orientationConfidence = orientationConfidence;
+  }
 
   const { text, lines } = await ocrPageWithLines(ocrCanvas, onProgress ? (m) => onProgress(1, 1, m) : undefined);
 
@@ -1452,6 +1573,8 @@ async function ocrPdfText(file, onProgress) {
   let combined = '';
   let tinDigits = { ssn: '', ein: '' };
   let addressBoxText = '';
+  let rotationDegrees = 0;
+  let orientationConfidence = null;
 
   for (let i = 1; i <= pagesToScan; i++) {
     const page = await pdf.getPage(i);
@@ -1461,7 +1584,21 @@ async function ocrPdfText(file, onProgress) {
     rawCanvas.height = viewport.height;
     await page.render({ canvasContext: rawCanvas.getContext('2d'), viewport }).promise;
 
-    const canvas = deskewCanvas(rawCanvas);
+    // Orientation is only probed on page 1 and reused for the rest — a
+    // scanned multi-page batch is fed through the scanner the same way
+    // every page, so a second/third probe would just repeat the same OCR
+    // cost for the same answer.
+    let orientedCanvas = rawCanvas;
+    if (i === 1) {
+      const oriented = await pickBestOrientation(rawCanvas);
+      orientedCanvas = oriented.canvas;
+      rotationDegrees = oriented.degrees;
+      orientationConfidence = oriented.confidence;
+    } else if (rotationDegrees) {
+      orientedCanvas = rotateCanvasExpand(rawCanvas, rotationDegrees);
+    }
+
+    const canvas = deskewCanvas(orientedCanvas);
     const ocrCanvas = grayscaleContrastCanvas(canvas);
 
     const { text, lines } = await ocrPageWithLines(
@@ -1471,7 +1608,11 @@ async function ocrPdfText(file, onProgress) {
     combined += text + '\n';
 
     if (i === 1) {
-      if (debugExtractionTrace) debugExtractionTrace.canvas = canvas;
+      if (debugExtractionTrace) {
+        debugExtractionTrace.canvas = canvas;
+        debugExtractionTrace.rotationDegrees = rotationDegrees;
+        debugExtractionTrace.orientationConfidence = orientationConfidence;
+      }
       [tinDigits, addressBoxText] = await Promise.all([
         ocrTinBoxDigits(canvas, lines),
         ocrAddressBoxText(canvas, lines),
@@ -1934,6 +2075,118 @@ function extractAddress(text, tinSection) {
   return { streetAddress, city, stateZip };
 }
 
+// Real two-letter US state/territory codes. The state, in both
+// extractAddress and parseAddressBoxText, is matched purely by shape
+// ("two letters"), so OCR noise that happens to land on two adjacent
+// letters (e.g. a stray "IX" or "CR" picked up near the ZIP) can pass
+// through as if it were a genuine state. Gating the final value against
+// the real list catches that case without touching how the value was
+// found in the first place.
+const VALID_US_STATES = new Set([
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA',
+  'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT',
+  'VA', 'WA', 'WV', 'WI', 'WY', 'DC',
+  // US territories and military/diplomatic mail codes — a legitimate
+  // address here (Puerto Rico, Guam, an APO/FPO address) is otherwise
+  // indistinguishable, by this same two-letter shape, from OCR noise.
+  'PR', 'GU', 'VI', 'AS', 'MP', 'AA', 'AE', 'AP',
+]);
+
+// A captured "state ZIP" string is only trustworthy if its state half is a
+// real US state/territory code; otherwise the whole value is dropped
+// rather than shown to the user as if it were reliable.
+function validateStateZip(stateZip) {
+  const match = /^([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/.exec((stateZip || '').trim());
+  if (!match) return stateZip;
+  return VALID_US_STATES.has(match[1].toUpperCase()) ? stateZip : '';
+}
+
+// Federal tax classification (the "W-9 type" checkbox row). The reference
+// Python pipeline detects this from a checkbox-region crop with OCR-glyph
+// heuristics for the checkmark itself; this pipeline has no such region, so
+// rather than translate that line-by-line, this looks for a checkmark-like
+// glyph immediately preceding each classification's label anywhere in the
+// extracted text, falling back to the tax-ID type the same way the Python
+// version does when no checkbox reads cleanly.
+const LLC_TAX_CLASSIFICATION_RE = /\b([CSP])\s+LLC,\s*unless\s*it\s*is\s*a\s*disregarded\s*entity/i;
+// Checked when the classification-code regex above doesn't match — e.g. the
+// filer's handwritten C/S/P code didn't land next to that exact sentence in
+// the OCR'd text — so a plain "[x] Limited liability company" mark still
+// resolves to LLC instead of silently falling through to the SSN/EIN
+// tax-ID-based guess (which would otherwise mislabel an EIN-filing LLC as
+// the generic 'Other').
+const LLC_CHECKBOX_RE = /[xX✓✔]\s*Limited\s*liability\s*compan/i;
+const W9_TYPE_CHECKBOX_LABELS = [
+  ['Individual/sole proprietor', 'Individual/sole proprietor'],
+  ['C Corporation', 'C corporation'],
+  ['S Corporation', 'S corporation'],
+  ['Partnership', 'Partnership'],
+  ['Trust/estate', 'Trust/estate'],
+  ['Other', 'Other'],
+];
+
+function extractW9Type(text, tinType) {
+  if (LLC_TAX_CLASSIFICATION_RE.test(text)) return 'LLC';
+  if (LLC_CHECKBOX_RE.test(text)) return 'LLC';
+
+  for (const [label, result] of W9_TYPE_CHECKBOX_LABELS) {
+    if (new RegExp('[xX✓✔]\\s*' + loosePattern(label), 'i').test(text)) return result;
+  }
+
+  if (tinType === 'SSN') return 'Individual/sole proprietor';
+  if (tinType === 'EIN') return 'Other';
+  return '';
+}
+
+// Noise phrases that occasionally get grabbed as the company name when the
+// real value is missing or unreadable and a label-adjacent fragment slips
+// through the regex instead.
+const NAME_NOISE_TERMS = [
+  'name of entity',
+  'business name',
+  'requester',
+  'print or type',
+  'taxpayer identification',
+  'part i',
+  'part ii',
+  'signature',
+];
+
+// Trims a trailing run of tokens that contain no letters or digits at all
+// (a lone "©", a stray "[" — OCR noise from a nearby checkbox glyph or form
+// artifact bleeding into the capture window when the real stop-label after
+// the name didn't OCR cleanly enough for the stop regex to catch). Stops at
+// the first trailing token that has real alphanumeric content, so a
+// legitimate trailing "." or "&" — as in "Smith & Sons, Inc." — is left
+// alone; only tokens with NOTHING but symbols get dropped.
+function stripTrailingSymbolNoise(value) {
+  const tokens = (value || '').split(/\s+/).filter(Boolean);
+  while (tokens.length > 1 && !/[A-Za-z0-9]/.test(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+  return tokens.join(' ');
+}
+
+function isBadCompanyName(value) {
+  const name = (value || '').replace(/\s+/g, ' ').trim();
+  if (!name) return true;
+
+  const normalized = name.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  // A threshold of 2 (not 3) so real short names — "3M", "GE", "GM" — survive;
+  // only a single stray character/digit (near-certainly OCR noise) is caught.
+  if (normalized.length < 2) return true;
+  if ((name.replace(/[^A-Za-z]/g, '')).length < 2) return true;
+  // Equality, not substring: NAME_NOISE_TERMS exists to catch a captured
+  // value that IS leftover label text (e.g. just "Signature", just
+  // "Requester"), not to reject a real company name that merely contains
+  // one of these words — "Signature Bank" is a real company name.
+  if (NAME_NOISE_TERMS.some((term) => normalized === term)) return true;
+  if (/^[0-9 ]+$/.test(normalized)) return true;
+
+  return false;
+}
+
 function parseW9Fields(rawText, tinDigits, directFields, addressBoxText) {
   const text = rawText.replace(/\s+/g, ' ').trim();
   const tinSection = extractPartISection(text);
@@ -1946,7 +2199,8 @@ function parseW9Fields(rawText, tinDigits, directFields, addressBoxText) {
     : tinDigits;
 
   const companyNameSource = directFields && directFields.company_name ? 'acroform' : 'text-regex';
-  const companyName = (directFields && directFields.company_name) || extractBusinessName(text);
+  let companyName =
+    (directFields && directFields.company_name) || stripTrailingSymbolNoise(extractBusinessName(text));
   const { ssnNumber, einNumber, selectedType, taxId } = extractTaxId(text, effectiveTinDigits);
 
   let streetAddress;
@@ -1971,6 +2225,18 @@ function parseW9Fields(rawText, tinDigits, directFields, addressBoxText) {
     ? 'acroform'
     : (tinDigits && tinDigits.source) || (effectiveTinDigits && (effectiveTinDigits.ssn || effectiveTinDigits.ein) ? 'ocr-box' : 'text-regex');
 
+  // Final validation pass: reject values that were captured but aren't
+  // plausible, rather than passing OCR/regex noise through to the user.
+  // Acroform-sourced values (direct field extraction, not OCR/regex) skip
+  // this — they come straight from the PDF's own form fields.
+  if (!(directFields && directFields.company_name) && isBadCompanyName(companyName)) {
+    companyName = '';
+  }
+  if (addressSource !== 'acroform') {
+    stateZip = validateStateZip(stateZip);
+  }
+  const entityType = extractW9Type(text, selectedType);
+
   return {
     company_name: companyName,
     selected_tax_id_type: selectedType,
@@ -1980,6 +2246,7 @@ function parseW9Fields(rawText, tinDigits, directFields, addressBoxText) {
     street_address: streetAddress,
     city,
     state_zip: stateZip,
+    entity_type: entityType,
     _confidence: computeFieldConfidence({ companyName, ssnNumber, einNumber, selectedType, streetAddress, city, stateZip }, {
       companyNameSource,
       tinSource,
@@ -2071,6 +2338,7 @@ function logExtractionTrace(data) {
     data._confidence.taxId
   );
   console.log('address:', data._confidence.sources.addressSource, 'confidence:', data._confidence.address);
+  console.log('entity_type:', data.entity_type || 'none');
   if (debugExtractionTrace) console.log('bboxes:', debugExtractionTrace);
   console.groupEnd();
 }
@@ -2208,13 +2476,25 @@ async function processW9(file) {
   }
 }
 
-function setStatus(message, isError = false) {
-  status.textContent = message;
-  status.classList.toggle('error', isError);
+// Live OCR progress ("Running OCR... 45%") already updates once per tick
+// inside the wizard's own loading overlay (wizardLoadingText, below) — the
+// hero's #status line mirroring the exact same fast-ticking text right next
+// to it was pure visual duplication, not two different pieces of
+// information. Suppressing just this one repeating message pattern from
+// #status keeps every other message (the initial "Reading file..." line,
+// and the final parsed/error result once extraction finishes) exactly as
+// before.
+const OCR_PROGRESS_TICK_RE = /^Running OCR(?: on page \d+\/\d+)?\.\.\. \d+%$/;
 
-  status.classList.remove('flash');
-  void status.offsetWidth;
-  status.classList.add('flash');
+function setStatus(message, isError = false) {
+  if (!OCR_PROGRESS_TICK_RE.test(message)) {
+    status.textContent = message;
+    status.classList.toggle('error', isError);
+
+    status.classList.remove('flash');
+    void status.offsetWidth;
+    status.classList.add('flash');
+  }
 
   if (!wizardLoading.hidden) {
     wizardLoadingText.textContent = message;
