@@ -3569,6 +3569,14 @@ navGeneratorLink.addEventListener('click', (e) => {
   const overlay = document.getElementById('introOverlay');
   if (!overlay) return;
 
+  const INTRO_RELOADED_FLAG = 'docgen_intro_reloaded';
+
+  if (sessionStorage.getItem(INTRO_RELOADED_FLAG)) {
+    sessionStorage.removeItem(INTRO_RELOADED_FLAG);
+    overlay.remove();
+    return;
+  }
+
   const man = document.getElementById('man');
   const elevator = document.getElementById('elevator');
 
@@ -3640,7 +3648,10 @@ navGeneratorLink.addEventListener('click', (e) => {
       setTimeout(() => brandLogo.classList.remove('cta-pulse'), 1600);
     }, FLY_DURATION);
 
-    setTimeout(() => overlay.remove(), FLY_DURATION + 750);
+    setTimeout(() => {
+      sessionStorage.setItem(INTRO_RELOADED_FLAG, '1');
+      window.location.reload();
+    }, FLY_DURATION + 750);
   }
 
   runIntroAnimation();

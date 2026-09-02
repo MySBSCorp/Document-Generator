@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://login.microsoftonline.com; frame-src https://login.microsoftonline.com blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Document Generator</title>
-<link rel="stylesheet" href="style.css?v=20260826-24">
+<link rel="stylesheet" href="style.css?v=20260902-26">
 </head>
 <body>
 
@@ -53,12 +53,47 @@
   </div>
 
   <div id="authLogoutConfirmModal" class="auth-modal-overlay" hidden role="alertdialog" aria-labelledby="authLogoutConfirmTitle">
-    <div class="auth-modal">
+    <div class="auth-modal auth-modal--logout">
+      <svg class="auth-modal-icon auth-modal-icon--logout" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M16 16l4-4-4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="20" y1="12" x2="9" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
       <h2 id="authLogoutConfirmTitle">Sign out?</h2>
+      <div class="auth-modal-user" id="authLogoutUserInfo" hidden>
+        <span class="auth-modal-user-avatar" id="authLogoutUserAvatar" aria-hidden="true"></span>
+        <span class="auth-modal-user-text">
+          <span class="auth-modal-user-name" id="authLogoutUserName"></span>
+          <span class="auth-modal-user-email" id="authLogoutUserEmail"></span>
+        </span>
+      </div>
       <p class="auth-message">You'll be signed out and returned to the login page.</p>
       <div class="auth-modal-actions">
-        <button type="button" class="btn btn-secondary" id="authLogoutCancelBtn">No, stay signed in</button>
-        <button type="button" class="btn" id="authLogoutConfirmBtn">Yes, sign out</button>
+        <button type="button" class="btn btn-secondary" id="authLogoutCancelBtn">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Stay signed in</span>
+        </button>
+        <button type="button" class="btn btn-danger" id="authLogoutConfirmBtn">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 16l4-4-4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="20" y1="12" x2="9" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span>Sign out</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="authBackNavConfirmModal" class="auth-modal-overlay" hidden role="alertdialog" aria-labelledby="authBackNavConfirmTitle">
+    <div class="auth-modal">
+      <h2 id="authBackNavConfirmTitle">Go back to login?</h2>
+      <p class="auth-message">Going back will sign you out and return you to the login page.</p>
+      <div class="auth-modal-actions">
+        <button type="button" class="btn btn-secondary" id="authBackNavCancelBtn">Stay signed in</button>
+        <button type="button" class="btn" id="authBackNavConfirmBtn">Yes, sign out</button>
       </div>
     </div>
   </div>
@@ -349,7 +384,7 @@
       </div>
     </aside>
   </main>
-<script type="module" src="auth-ui.js?v=2"></script>
-<script type="module" src="script.js?v=20260826-2"></script>
+<script type="module" src="auth-ui.js?v=3"></script>
+<script type="module" src="script.js?v=20260826-3"></script>
 </body>
 </html>

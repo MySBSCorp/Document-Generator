@@ -20,6 +20,14 @@ const authBlockedRetryBtn = document.getElementById("authBlockedRetryBtn");
 const authLogoutConfirmModal = document.getElementById("authLogoutConfirmModal");
 const authLogoutCancelBtn = document.getElementById("authLogoutCancelBtn");
 const authLogoutConfirmBtn = document.getElementById("authLogoutConfirmBtn");
+const authLogoutUserInfo = document.getElementById("authLogoutUserInfo");
+const authLogoutUserAvatar = document.getElementById("authLogoutUserAvatar");
+const authLogoutUserName = document.getElementById("authLogoutUserName");
+const authLogoutUserEmail = document.getElementById("authLogoutUserEmail");
+
+const authBackNavConfirmModal = document.getElementById("authBackNavConfirmModal");
+const authBackNavCancelBtn = document.getElementById("authBackNavCancelBtn");
+const authBackNavConfirmBtn = document.getElementById("authBackNavConfirmBtn");
 
 const introOverlay = document.getElementById("introOverlay");
 const topnav = document.querySelector(".topnav");
@@ -55,14 +63,56 @@ function initialsFor(name) {
   return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join("");
 }
 
+let isAuthenticated = false;
+let backGuardArmed = false;
+let currentAccount = null;
+
+function armBackGuard() {
+  if (backGuardArmed) return;
+  backGuardArmed = true;
+  history.pushState({ authGuard: true }, "");
+}
+
+function disarmBackGuard() {
+  backGuardArmed = false;
+}
+
+window.addEventListener("popstate", () => {
+  if (!isAuthenticated) return;
+  history.pushState({ authGuard: true }, "");
+  authBackNavConfirmModal.hidden = false;
+});
+
+authBackNavCancelBtn.addEventListener("click", () => {
+  authBackNavConfirmModal.hidden = true;
+});
+
+authBackNavConfirmBtn.addEventListener("click", async () => {
+  authBackNavConfirmBtn.disabled = true;
+  authBackNavCancelBtn.disabled = true;
+  try {
+    await logout();
+  } catch (error) {
+    console.error("[auth] logout failed:", error);
+    window.location.reload();
+  } finally {
+    authBackNavConfirmBtn.disabled = false;
+    authBackNavCancelBtn.disabled = false;
+    authBackNavConfirmModal.hidden = true;
+  }
+});
+
 function showAuthenticated(account) {
   authGate.classList.add("is-hidden");
   setAppInert(false);
+  currentAccount = account;
   const displayName = account?.name || "Signed in";
   authUserName.textContent = displayName;
   authUserEmail.textContent = getAccountEmail(account) || "";
   authAvatar.textContent = initialsFor(displayName);
   authUser.hidden = false;
+  isAuthenticated = true;
+  armBackGuard();
 }
 
 function showUnauthenticated() {
@@ -70,6 +120,9 @@ function showUnauthenticated() {
   setAppInert(true);
   authGate.classList.remove("is-hidden");
   setGateState("unauthenticated");
+  isAuthenticated = false;
+  currentAccount = null;
+  disarmBackGuard();
 }
 
 async function init() {
@@ -129,6 +182,16 @@ authRetryBtn.addEventListener("click", () => {
 });
 
 logoutBtn.addEventListener("click", () => {
+  const displayName = currentAccount?.name || "Signed in";
+  const email = getAccountEmail(currentAccount) || "";
+  if (displayName || email) {
+    authLogoutUserName.textContent = displayName;
+    authLogoutUserEmail.textContent = email;
+    authLogoutUserAvatar.textContent = initialsFor(displayName);
+    authLogoutUserInfo.hidden = false;
+  } else {
+    authLogoutUserInfo.hidden = true;
+  }
   authLogoutConfirmModal.hidden = false;
 });
 

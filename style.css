@@ -118,12 +118,130 @@
 .auth-modal-actions {
   display: flex;
   gap: 12px;
-  margin-top: 6px;
+  margin-top: 8px;
+  width: 100%;
 }
 
 .auth-modal-actions .btn {
+  flex: 1;
   margin-top: 0;
-  padding: 13px 20px;
+  padding: 14px 12px;
+  font-size: 11.5px;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+  justify-content: center;
+  gap: 7px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, color 0.18s ease, letter-spacing 0.18s ease, border-color 0.18s ease;
+}
+
+.auth-modal-actions .btn:hover {
+  letter-spacing: 1.2px;
+  transform: translateY(-2px);
+}
+
+.auth-modal-actions .btn:active {
+  transform: translateY(0);
+}
+
+.auth-modal-actions .btn:focus-visible {
+  outline: 2px solid hsl(261deg 80% 55%);
+  outline-offset: 2px;
+}
+
+.btn-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.auth-modal--logout {
+  max-width: 380px;
+  padding: 30px 28px 26px;
+}
+
+.auth-modal-icon--logout {
+  width: 44px;
+  height: 44px;
+  padding: 9px;
+  border-radius: 50%;
+  background: hsl(261deg 85% 96%);
+  color: hsl(261deg 80% 48%);
+}
+
+.auth-modal-user {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f7f7f9;
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.auth-modal-user-avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(261deg 80% 48%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.auth-modal-user-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.auth-modal-user-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auth-modal-user-email {
+  font-size: 0.78rem;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn.btn-danger {
+  background-color: #c62f2f;
+  color: #fff;
+  border-color: #c62f2f;
+  box-shadow: rgb(198 47 47 / 25%) 0px 4px 14px 0px;
+}
+
+.btn.btn-danger:hover {
+  background-color: #a82424;
+  border-color: #a82424;
+  color: #fff;
+  box-shadow: rgb(198 47 47 / 40%) 0px 10px 24px 0px;
+}
+
+.btn.btn-danger:active {
+  background-color: #8f2222;
+  border-color: #8f2222;
+  color: #fff;
+  box-shadow: rgb(198 47 47 / 25%) 0px 4px 14px 0px;
+}
+
+.btn-secondary.btn:hover {
+  border-color: #999;
 }
 
 .auth-user {
