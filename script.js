@@ -2637,18 +2637,665 @@ async function applyDocxReplacements(source, replacements) {
   return { bytes, replacedCount };
 }
 
-const DOCX_PAGE_PX_TO_PT = 72 / 96;
+// This template's own w:pgSz is 12240x15840 twips — US Letter (8.5in x 11in),
+// not A4. Targeting A4 (595.28x841.89pt, narrower AND taller than Letter) forced
+// every page to scale down ~2.7% in width to fit, which then left a stray blank
+// margin at the bottom of every page (A4's extra height beyond the actual
+// 792pt-tall content) and shifted where the content-aware slicer below found a
+// "full page" — visible as inconsistent extra whitespace, worst on whichever
+// page's real content happened to land closest to that leftover margin. Letter
+// at 72pt/in matches the source exactly, so a Word page (already paginated by
+// docx-preview to its own true size) maps to one output page with no rescaling
+// and, in the ordinary case, no slicing at all — output pagination then matches
+// Word's own page breaks one-to-one instead of drifting from them.
+const LETTER_WIDTH_PT = 612;
+const LETTER_HEIGHT_PT = 792;
+
+// The header positions the logo with a paragraph tab (w:ptab, "jump to the right
+// margin") that docx-preview silently drops, so the logo renders at the left instead
+// of the right — Word itself (and the .docx download) shows it top-right.
+function alignHeaderLogoRight(root) {
+  root.querySelectorAll('.docx_header').forEach((p) => {
+    p.style.textAlign = 'right';
+  });
+}
+
+// Every run in this template's document.xml explicitly sets w:rFonts to Times New
+// Roman — there is no other font used anywhere in the body. docx-preview still
+// renders body text in Calibri (the Normal style's docDefaults font) for most
+// runs regardless, only partially honoring the run-level override for a handful
+// of runs (e.g. bold Fed-Id values) and even those come out as a font stack
+// ("Arial, Times New Roman" on the title) rather than the plain single font Word
+// itself shows. Since the template never legitimately uses any other font, it's
+// safe to force Times New Roman as an inline style on every element docx-preview
+// rendered — an inline style already outranks docx-preview's class-based rules
+// without needing !important, which is worth avoiding here: html2canvas parses
+// each element's inline style text itself rather than only using the resolved
+// computed value, and a literal "!important" suffix in that text confused its
+// font-matching enough to silently fall back to a generic sans-serif font.
+function forceDocumentFont(root) {
+  root.querySelectorAll('section.docx, section.docx *').forEach((el) => {
+    el.style.fontFamily = '"Times New Roman", Times, serif';
+  });
+}
+
+// docx-preview computes every custom Word tab stop's width (tabStopClass, sized
+// by updateTabStop/refreshTabStops) from getBoundingClientRect() measurements
+// taken while the rendered nodes are still detached from the document —
+// refreshTabStops runs at the end of its own render() pass, and that pass
+// returns before the caller (renderAsync) ever appends the result into a
+// container. Every measurement it reads back is therefore zero, so every
+// custom tab in this template renders far narrower than it should: the
+// manually-tabbed "(b) Employer's..." clause on page 3 (every other lettered
+// item gets its indent from numbering.xml instead, unaffected), and the
+// "SBS CORP <tab> [Contractor]" / "Name:"/"Title:"/"Date:" two-column tab
+// stops on both signature pages. Once these nodes are actually attached (they
+// are by the time this runs), redoing docx-preview's own computation — this
+// time against real layout — fixes it without hardcoding pixel guesses that
+// would break if the fixed text before a tab (e.g. "SBS CORP ") or the
+// template's font ever changed.
+const PX_TO_PT = 72 / 96;
+
+function fixTabStopWidth(tabSpan, targetPt) {
+  const p = tabSpan.closest('p');
+  if (!p) return;
+  const pRect = p.getBoundingClientRect();
+  const spanRect = tabSpan.getBoundingClientRect();
+  const marginLeft = parseFloat(getComputedStyle(p).marginLeft) || 0;
+  const leftPt = (spanRect.left - pRect.left - marginLeft) * PX_TO_PT;
+  const widthPt = Math.max(0, targetPt - leftPt);
+  tabSpan.style.wordSpacing = `${widthPt.toFixed(0)}pt`;
+}
+
+// Word's own default tab stop increment (used by any paragraph that doesn't
+// define its own custom w:tabs, like the small "SBS <tab> Contractor" label
+// under each page's Initial block) — a half inch.
+const DEFAULT_TAB_STOP_PT = 36;
+
+// pt targets read straight from this template's own w:tabs (twips / 20): the
+// "(b)" clause's own first stop (1440 twips = 72pt); its continuation line
+// ("covering bodily injury...", a separate paragraph docx-preview renders as
+// one visual line via matching indentation) walks the same four stops in
+// sequence (1440/1530/1620/1800 twips = 72/76.5/81/90pt) to reach its final
+// 90pt indent; and each signature block's company-name column (4860 twips =
+// 243pt) and Name:/Title:/Date: column (5490 twips = 274.5pt). The matching
+// "Sign:" line uses literal space characters instead of a tab in the source
+// document, so it isn't affected and isn't touched here.
+function fixTemplateTabStops(root) {
+  root.querySelectorAll('section.docx p').forEach((p) => {
+    const tabSpans = Array.from(p.querySelectorAll('.docx-tab-stop'));
+    if (!tabSpans.length) return;
+    const text = p.textContent.trim();
+    if (text.startsWith('(b) Employer')) {
+      fixTabStopWidth(tabSpans[0], 72);
+    } else if (text.startsWith('covering bodily injury')) {
+      const targets = [72, 76.5, 81, 90];
+      tabSpans.forEach((span, i) => fixTabStopWidth(span, targets[Math.min(i, targets.length - 1)]));
+    } else if (text.startsWith('SBS CORP')) {
+      fixTabStopWidth(tabSpans[0], 243);
+    } else if (text.startsWith('Name:') || text.startsWith('Title:') || text.startsWith('Date:')) {
+      fixTabStopWidth(tabSpans[0], 274.5);
+    } else {
+      // Every other tab in this template (a handful, all either fully blank
+      // or the short "SBS <tab> Contractor" label line) doesn't define its
+      // own custom w:tabs, so Word falls back to its own default half-inch
+      // stops for it. Replicating that keeps these few unnamed tabs at the
+      // small, harmless gap Word shows instead of collapsing to near-zero
+      // width now that enabling `experimental` above (to get the named
+      // fixes right) hands them to this same, otherwise-broken computation.
+      tabSpans.forEach((span) => {
+        const pp = span.closest('p');
+        if (!pp) return;
+        const pRect = pp.getBoundingClientRect();
+        const spanRect = span.getBoundingClientRect();
+        const marginLeft = parseFloat(getComputedStyle(pp).marginLeft) || 0;
+        const leftPt = (spanRect.left - pRect.left - marginLeft) * PX_TO_PT;
+        const nextStopPt = Math.ceil((leftPt + 1) / DEFAULT_TAB_STOP_PT) * DEFAULT_TAB_STOP_PT;
+        fixTabStopWidth(span, nextStopPt);
+      });
+    }
+  });
+}
+
+// Several clauses in this template (the insurance list in "No Power to Act..." /
+// Section 3, for one) are authored as several short Word paragraphs in a row
+// instead of one paragraph that wraps naturally. Those paragraphs use Word's
+// built-in "No Spacing" style, which — in real Word — collapses the gap between
+// them to zero even though that's implied by Word's own built-in definition of
+// the style rather than spelled out in this template's styles.xml. docx-preview
+// only reads what's explicit in styles.xml, so it falls back to the document's
+// default paragraph spacing (~10pt) between them instead, visibly gapping out
+// what should read as continuous lines of one clause. Forcing the margins to
+// zero for this style's class makes the render match what Word actually shows.
+function fixNoSpacingParagraphMargins(root) {
+  root.querySelectorAll('.docx_nospacing').forEach((p) => {
+    p.style.marginTop = '0';
+    p.style.marginBottom = '0';
+  });
+}
+
+// docx-preview can't render a Word feature this template's footer relies on: the
+// page-number frame (w:framePr) and its PAGE field, plus the fact the template only
+// fills in its "default" footer while leaving the "even page" footer (word/footer1.xml)
+// blank/uncached — Word ignores that stray footer because evenAndOddHeaders is off in
+// settings.xml, but docx-preview alternates footers by page parity regardless, so
+// every other rendered page loses its footer entirely and the pages that keep one show
+// a static, unpositioned "1". On top of that, a Word page whose content overflows a
+// single sheet gets sliced into several A4 pages below (see renderDocxToPdf) — a
+// footer baked into the source screenshot would then land on only whichever slice
+// happens to contain those pixels, missing from the rest and never renumbered.
+// So: read the address out of whichever docx-preview page actually kept a footer,
+// and let the caller draw a real, correctly-numbered footer on every output PDF
+// page instead, painted over the source footer (see renderDocxToPdf) rather than
+// hiding it here. Mutating the footer's own style (visibility:hidden, opacity:0,
+// display:none all reproduce it) before the html2canvas capture below reliably
+// makes html2canvas mismeasure this template's justified body text elsewhere on
+// the same page and split words mid-letter ("technic" / "al support"), even though
+// the footer has nothing to do with that text — so this function only reads text
+// now, it doesn't touch the DOM.
+function extractFooterAddressText(root) {
+  const pageEls = Array.from(root.querySelectorAll('section.docx'));
+  let addressText = '';
+  for (const pageEl of pageEls) {
+    const footer = pageEl.querySelector('footer');
+    if (!footer || !footer.textContent.trim()) continue;
+    const clone = footer.cloneNode(true);
+    const cloneNumberEl = clone.querySelector('.docx_pagenumber');
+    if (cloneNumberEl) cloneNumberEl.remove();
+    addressText = clone.textContent.replace(/\s+/g, ' ').trim();
+    if (addressText) break;
+  }
+  return addressText;
+}
+
+// Blanking out the footer's own text is what actually keeps the source's stale
+// address/page-number from ever showing up underneath the fresh one drawn in
+// renderDocxToPdf — a size-based "paint a white rectangle over roughly where the
+// footer should be" cover can't tell a stale footer apart from a legitimately
+// full page whose own last line (an "Initial" line right against the bottom
+// margin, say) happens to sit in the same band, and got both wrong on different
+// pages (covering real text on one, missing the stale footer on another).
+// Clearing individual text nodes (not the footer's own visibility/display/
+// opacity) is a far smaller DOM change than hiding the whole block, and unlike
+// that doesn't reproduce the html2canvas mid-word-split bug elsewhere on the
+// page.
+function clearFooterText(root) {
+  root.querySelectorAll('footer').forEach((footer) => {
+    const walker = document.createTreeWalker(footer, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      node.nodeValue = '';
+    }
+  });
+}
+
+// Cosmetic-only equivalent for the in-app preview iframe, which just displays the
+// docx-preview DOM directly rather than compositing a PDF — so instead of hiding the
+// footer and redrawing it elsewhere, put the address and a correct page number back
+// on every page's existing footer, on one line as Word shows them.
+function normalizePreviewFooter(root) {
+  const pageEls = Array.from(root.querySelectorAll('section.docx'));
+  let addressFooterHtml = null;
+  for (const pageEl of pageEls) {
+    const footer = pageEl.querySelector('footer');
+    if (footer && footer.textContent.trim()) {
+      addressFooterHtml = footer.innerHTML;
+      break;
+    }
+  }
+  if (!addressFooterHtml) return;
+
+  pageEls.forEach((pageEl, i) => {
+    const footer = pageEl.querySelector('footer');
+    if (!footer) return;
+    footer.innerHTML = addressFooterHtml;
+    const pageNumberEl = footer.querySelector('.docx_pagenumber');
+    if (!pageNumberEl) return;
+    pageNumberEl.textContent = String(i + 1);
+
+    footer.style.display = 'flex';
+    footer.style.alignItems = 'baseline';
+    footer.style.justifyContent = 'space-between';
+    const pageNumberPara = pageNumberEl.closest('p');
+    if (pageNumberPara) {
+      pageNumberPara.style.margin = '0';
+      pageNumberPara.style.order = '1';
+    }
+    const addressPara = Array.from(footer.children).find((el) => el !== pageNumberPara);
+    if (addressPara) addressPara.style.margin = '0';
+  });
+}
+
+// docx-preview's own predefined stylesheet sets `.docx span { overflow-wrap:
+// break-word }`. html2canvas re-lays-out text with its own metrics instead of
+// reading the browser's real layout, and every so often that measurement is just
+// imprecise enough to conclude a word — or even part of one word-span, see
+// bakeInLineBreaks below — barely doesn't fit a line when, with the browser's
+// actual precise layout, it always did; this rule then legitimately lets it split
+// that word mid-letter to avoid an overflow that was never actually going to
+// happen. Neutralizing it removes html2canvas's ability to invoke that fallback
+// at all — combined with bakeInLineBreaks, which independently removes html2canvas's
+// need to decide *where* a line ends, this closes off both paths to a mid-word
+// split it might otherwise take.
+function withWordBreakNeutralized(styleContainer, fn) {
+  const override = document.createElement('style');
+  override.textContent = '.docx span { overflow-wrap: normal !important; word-break: normal !important; }';
+  styleContainer.appendChild(override);
+  return Promise.resolve(fn()).finally(() => {
+    override.remove();
+  });
+}
+
+// When a numbered list paragraph happens to fall right at a Word-page boundary,
+// docx-preview splits it into two <p> elements — an empty stub ending the first
+// page and the real text starting the next — but gives BOTH the same numbering
+// class, so the CSS counter (which drives the "(a)", "(b)", "(c)" markers)
+// increments twice for what is really one list item. The next page then shows
+// every remaining item off by one letter (see "(e)" for what should read "(d)").
+// The stub carries no visible text, so removing it outright removes its
+// phantom counter-increment along with it — the real item right after it then
+// gets the correct, single increment and the correct letter.
+function removeEmptyNumberingStubs(root) {
+  root.querySelectorAll('p[class*="docx-num-"]').forEach((p) => {
+    if (!p.textContent.trim()) p.remove();
+  });
+}
+
+// This template's page is 792pt tall (LETTER_HEIGHT_PT). docx-preview's own
+// automatic pagination gives each "section.docx" container a *min-height* of
+// that, not a hard cap, so when its own page-break estimate runs long it lets
+// a container grow past one true page's worth of content instead of cutting
+// it off, showing (and, before this, exporting) one too-tall "page" spanning
+// what should be several. This clones the oversized page's own shell (keeping
+// its header/footer/margins) for each overflow and moves the overflowing
+// blocks into it — cutting only between top-level blocks (each <p>/table
+// docx-preview renders directly under <article>), never through one — so
+// both the live preview and the exported PDF end up with one true US-Letter
+// sheet per page, matching Word's own pagination instead of docx-preview's
+// fewer, taller pages. Shared by both, so they can never disagree with each
+// other on where a page actually breaks.
+function repaginateToLetterPages(root) {
+  const pageEls = Array.from(root.querySelectorAll('section.docx'));
+  if (!pageEls.length) return;
+
+  // A page's own inline style declares its width as exactly 612pt
+  // (LETTER_WIDTH_PT) — but docx-preview doesn't reliably render at a clean
+  // 96px/in, so assuming that ratio to convert 792pt into a pixel threshold
+  // drifts by a few percent depending on however it actually rendered this
+  // run. Measuring the page's own rendered pixel width against its known
+  // 612pt and deriving the page-height threshold from that ratio keeps this
+  // exact, however docx-preview happened to render it — a fixed 96dpi
+  // assumption here previously left a handful of pages a little taller than
+  // a true page even after every fix above, because their real content did
+  // fit in 792pt but not in the dpi-mismatched pixel count standing in for it.
+  const pxPerPt = pageEls[0].getBoundingClientRect().width / LETTER_WIDTH_PT;
+  const PAGE_HEIGHT_PX = LETTER_HEIGHT_PT * pxPerPt;
+
+  function splitOversizedPagesOnce() {
+    let splitAny = false;
+    for (let i = 0; i < pageEls.length; i++) {
+      const pageEl = pageEls[i];
+      const article = pageEl.querySelector('article');
+      if (!article) continue;
+      const pageTop = pageEl.getBoundingClientRect().top;
+      const children = Array.from(article.children);
+
+      // Find the first block that doesn't fully fit — checking each block's
+      // own *bottom* against the page height, not its top, matters for a
+      // block several lines tall (a long paragraph, say) that starts before
+      // the boundary but wraps past it: its top alone would never cross the
+      // threshold, so a top-only check finds no split point at all and lets
+      // the whole page run long. Moving that block whole to the next page
+      // (never split before the first block — that would produce an empty
+      // page) can leave this page a little short of a full 792pt, which is
+      // the ordinary, expected way a paragraph that doesn't fit is handled.
+      let splitIndex = -1;
+      for (let c = 1; c < children.length; c++) {
+        const bottom = children[c].getBoundingClientRect().bottom - pageTop;
+        if (bottom > PAGE_HEIGHT_PX) {
+          splitIndex = c;
+          break;
+        }
+      }
+      if (splitIndex === -1) continue;
+
+      const newPageEl = pageEl.cloneNode(true);
+      const newArticle = newPageEl.querySelector('article');
+      while (newArticle.firstChild) newArticle.removeChild(newArticle.firstChild);
+      for (let c = splitIndex; c < children.length; c++) {
+        newArticle.appendChild(children[c]);
+      }
+      pageEl.after(newPageEl);
+      // Splice the new page in right after this one so the loop reaches it too —
+      // a severely oversized container can need more than one extra page.
+      pageEls.splice(i + 1, 0, newPageEl);
+      splitAny = true;
+    }
+    return splitAny;
+  }
+
+  // A single pass already re-examines any page it just created (the loop
+  // above reaches it via the splice), but repeats here too: moving a whole
+  // straddling block onto a fresh page can still leave that new page itself
+  // over height if more than one such block was needed, or if a later fixup
+  // (moveContentAfterTrailingBlankRun, below) prepends onto a page that was
+  // already full.
+  function splitOversizedPages() {
+    for (let round = 0; round < 10 && splitOversizedPagesOnce(); round++);
+  }
+
+  // Many sections in this template end with a run of several blank paragraphs
+  // right after their own "Initial ___ / SBS Contractor" sign-off line —
+  // padding that, in the source document's own original pagination, existed
+  // to push whatever comes next onto a new page. docx-preview's pagination
+  // doesn't treat that blank run as an actual page break, so with pages now
+  // cut at their own true height, whatever trails it — a major section
+  // heading like "4. Fees", or just as often a single lettered clause like
+  // "(d)" continuing the very same section after its own sign-off line — can
+  // still land on the same page, stranded far below everything else with
+  // nothing following it. A run of three or more consecutive blank paragraphs
+  // is long enough to tell this deliberate padding apart from the ordinary
+  // one-line gaps between paragraphs elsewhere (those never reach that many
+  // blank paragraphs in a row) — but that same padding also separates every
+  // OTHER section from the next one that just happens to follow normally on
+  // the same page, with a full section's worth of real content after it, not
+  // a small stranded fragment; moving that much unconditionally turned every
+  // one of those into a forced page break too (11 pages became 15). Only
+  // stepping in when what follows the run is itself small — under a third of
+  // a page — keeps this to rescuing genuinely orphaned fragments like the two
+  // above, without reshaping pages that were never actually broken. Returns
+  // whether anything moved.
+  const MIN_BLANK_RUN = 3;
+  const MAX_ORPHAN_HEIGHT_PX = PAGE_HEIGHT_PX / 3;
+  function moveContentAfterTrailingBlankRun() {
+    let movedAny = false;
+    for (let i = 0; i < pageEls.length - 1; i++) {
+      const article = pageEls[i].querySelector('article');
+      const nextArticle = pageEls[i + 1].querySelector('article');
+      if (!article || !nextArticle) continue;
+      const pageTop = pageEls[i].getBoundingClientRect().top;
+      const kids = Array.from(article.children);
+      let splitAt = -1;
+      let runLen = 0;
+      for (let c = 0; c < kids.length; c++) {
+        if (!kids[c].textContent.trim()) {
+          runLen++;
+        } else {
+          // This template's own "Initial ___ / SBS Contractor" sign-off is
+          // itself commonly preceded by this same blank-padding pattern, but
+          // it belongs at the end of whichever page it naturally falls on —
+          // it's the padding *after* it, not before it, that signals a real
+          // page break. Treating "Initial" as the orphan here moved the
+          // sign-off itself onto the next page instead of leaving it in
+          // place, so it's excluded from counting as a split point (the run
+          // simply keeps being ignored, not reset past it) while scanning
+          // continues forward for the genuine split that follows it.
+          if (runLen >= MIN_BLANK_RUN && kids[c].textContent.trim() !== 'Initial') {
+            splitAt = c;
+          }
+          runLen = 0;
+        }
+      }
+      if (splitAt <= 0) continue;
+      const lastKid = kids[kids.length - 1];
+      const trailingHeight = lastKid.getBoundingClientRect().bottom - pageTop - (kids[splitAt].getBoundingClientRect().top - pageTop);
+      if (trailingHeight > MAX_ORPHAN_HEIGHT_PX) continue;
+      nextArticle.prepend(...kids.slice(splitAt));
+      movedAny = true;
+    }
+    return movedAny;
+  }
+
+  splitOversizedPages();
+  // Prepending trailing content onto a page that was already nearly full
+  // can itself push that page back over true page height, so keep
+  // alternating the two passes until a round moves nothing further — bounded,
+  // since this template's pages settle within one or two rounds in practice.
+  for (let round = 0; round < 5; round++) {
+    if (!moveContentAfterTrailingBlankRun()) break;
+    splitOversizedPages();
+  }
+}
+
+// The main MSA's own "IN WITNESS WHEREOF" closing line and the signature
+// block right after it ("SBS CORP" / the contractor's name, plus the
+// Sign:/Name:/Title:/Date: columns) are one cohesive unit, but this
+// template's own blank-padding pattern between them (the same one
+// moveContentAfterTrailingBlankRun corrects elsewhere) can still leave them
+// split across two pages, since neither piece alone is large enough to look
+// like a genuine orphan and there's a whole "Exhibit A" section coming right
+// after to fill the rest of that page anyway. This targets only this one
+// specific pair of paragraphs by their own text — deliberately narrower than
+// a general rule, so it can't reshape pagination anywhere else in the
+// document.
+function moveMainSignatureBlockToWitnessPage(root) {
+  const paragraphs = Array.from(root.querySelectorAll('section.docx p'));
+  const witnessIdx = paragraphs.findIndex((p) => p.textContent.includes('IN WITNESS WHEREOF'));
+  if (witnessIdx === -1) return;
+  const sigStartIdx = paragraphs.findIndex(
+    (p, idx) => idx > witnessIdx && p.textContent.trim().startsWith('SBS CORP')
+  );
+  if (sigStartIdx === -1) return;
+  const witnessPage = paragraphs[witnessIdx].closest('section.docx');
+  const sigPage = paragraphs[sigStartIdx].closest('section.docx');
+  if (!witnessPage || !sigPage || witnessPage === sigPage) return;
+  const witnessArticle = witnessPage.querySelector('article');
+  if (!witnessArticle) return;
+  const exhibitIdx = paragraphs.findIndex(
+    (p, idx) => idx > sigStartIdx && p.textContent.trim().startsWith('Exhibit A')
+  );
+  const endIdx = exhibitIdx === -1 ? paragraphs.length : exhibitIdx;
+  paragraphs
+    .slice(sigStartIdx, endIdx)
+    .filter((p) => p.closest('section.docx') === sigPage)
+    .forEach((p) => witnessArticle.appendChild(p));
+}
+
+// This template's own per-section "Initial ___ / SBS Contractor" sign-off
+// isn't wanted on the two pages that close out the document — the one
+// carrying the main "IN WITNESS WHEREOF" signature block, and the Exhibit A
+// page — since the signature blocks already on those pages cover that. Which
+// earlier section's own Initial line happens to land there instead shifts
+// with how long the substituted company name/address/etc. are, so this
+// anchors on the two closing pages by their own text (not a fixed page
+// number) and removes only an Initial group that ends up sharing a page with
+// either — every other Initial block elsewhere in the document is untouched.
+function removeInitialFromClosingPages(root) {
+  const pageEls = Array.from(root.querySelectorAll('section.docx'));
+  pageEls.forEach((pageEl) => {
+    const text = pageEl.textContent;
+    if (!text.includes('IN WITNESS WHEREOF') && !text.includes('Exhibit A')) return;
+    const article = pageEl.querySelector('article');
+    if (!article) return;
+    Array.from(article.children).forEach((p) => {
+      if (p.textContent.trim() !== 'Initial') return;
+      // Remove this paragraph and the rest of its fixed group (an empty
+      // spacer line, the underscore signature line, then the "SBS
+      // Contractor" labels) — stop once the label line itself is removed,
+      // since that's always the last piece of this group in the template.
+      let cur = p;
+      while (cur) {
+        const next = cur.nextElementSibling;
+        const isLabelLine = cur.textContent.includes('Contractor');
+        cur.remove();
+        if (isLabelLine) break;
+        cur = next;
+      }
+    });
+  });
+}
+
+// Moving the main signature block back onto its "IN WITNESS WHEREOF" page
+// above can leave the Exhibit A content that used to share a page with it
+// reflowing such that just one trailing field ends up alone starting the
+// very last page, with everything else back on the page before it. This
+// only ever looks at the last page in the whole document, and only acts
+// when it holds exactly one real line — narrower than a general rule, so it
+// can't affect pagination anywhere earlier in the document.
+function mergeSparseLastPageBack(root) {
+  const pageEls = Array.from(root.querySelectorAll('section.docx'));
+  if (pageEls.length < 2) return;
+  const lastPage = pageEls[pageEls.length - 1];
+  const prevPage = pageEls[pageEls.length - 2];
+  const lastArticle = lastPage.querySelector('article');
+  const prevArticle = prevPage.querySelector('article');
+  if (!lastArticle || !prevArticle) return;
+  const realChildren = Array.from(lastArticle.children).filter((c) => c.textContent.trim());
+  if (realChildren.length !== 1) return;
+  Array.from(lastArticle.children).forEach((c) => prevArticle.appendChild(c));
+  lastPage.remove();
+}
+
+// Pages 2 and 4 each end with a clause that continues onto the next page, so
+// this template's own recurring "Initial ___ / SBS Contractor" sign-off
+// naturally lands wherever that clause actually finishes instead — leaving
+// visible blank room at the bottom of these two pages specifically, with
+// nothing removed or moved to put it there. Cloning the group from wherever
+// it already occurs and appending a copy is purely additive: it only ever
+// touches these two page numbers, nothing else in the document.
+function addInitialToPages(root, pageNumbers) {
+  const pageEls = Array.from(root.querySelectorAll('section.docx'));
+  let template = null;
+  for (const pageEl of pageEls) {
+    const article = pageEl.querySelector('article');
+    if (!article) continue;
+    const kids = Array.from(article.children);
+    const idx = kids.findIndex((k) => k.textContent.trim() === 'Initial');
+    if (idx === -1) continue;
+    let end = idx;
+    while (end < kids.length && !kids[end].textContent.includes('Contractor')) end++;
+    if (end < kids.length) {
+      template = kids.slice(idx, end + 1);
+      break;
+    }
+  }
+  if (!template) return;
+  pageNumbers.forEach((pn) => {
+    const pageEl = pageEls[pn - 1];
+    if (!pageEl) return;
+    const article = pageEl.querySelector('article');
+    if (!article) return;
+    if (Array.from(article.children).some((k) => k.textContent.trim() === 'Initial')) return;
+    template.forEach((node) => article.appendChild(node.cloneNode(true)));
+  });
+}
+
+// html2canvas re-lays-out text with its own metrics instead of reading the
+// browser's real layout, and every so often that measurement is just imprecise
+// enough to conclude a word barely doesn't fit a line when, with the browser's
+// actual precise layout, it always did — splitting that word mid-letter
+// ("technic" / "al support") in the exported PDF only, never in the live preview.
+// No amount of CSS coaxing (word-break, overflow-wrap, letter-spacing) alone fixes
+// this reliably, because it isn't really about any one of those properties — it's
+// html2canvas's own line-fitting decision that's wrong. So: read the browser's own
+// (always-correct) line breaks directly off the live, already-laid-out DOM by
+// wrapping every word in its own inline span, grouping those spans into lines by
+// their rendered top offset, and inserting a real <br> at each line boundary.
+// Once every line break already exists as a hard break in the DOM, html2canvas
+// has no wrapping decision left to make — it only has to draw each line's fixed
+// content, which is exactly what the real browser layout already decided.
+function bakeInLineBreaks(root) {
+  const paragraphs = root.querySelectorAll('p');
+  paragraphs.forEach((p) => wrapWordsInSpans(p));
+
+  // Each new .w2c-word span is unstyled, so docx-preview's own bare `span` rule
+  // (not this template's actual Times New Roman) wins until forceDocumentFont
+  // reaches it — and it has to reach it here, before the measurement pass below,
+  // or every word gets measured under the wrong font's metrics and the <br>s
+  // this function bakes in land at the wrong offsets (short orphaned words like
+  // "and" or "at" left alone on their own line once the real font is drawn).
+  forceDocumentFont(root);
+
+  // Read every word's position first, in one pass with no DOM writes in between —
+  // inserting a <br> reflows everything after it, so measuring and mutating in
+  // the same pass made each break shift the words after it, which read as new
+  // (wrong) line starts and put almost every remaining word on its own line.
+  paragraphs.forEach((p) => {
+    const words = Array.from(p.querySelectorAll(':scope .w2c-word'));
+    if (words.length < 2) return;
+    const tops = words.map((w) => w.getBoundingClientRect().top);
+    let lineTop = tops[0];
+    for (let i = 1; i < words.length; i++) {
+      // A single word can be split across sibling spans by a mid-word formatting
+      // change in the source document (no whitespace between the fragments) —
+      // never insert a break there, real or not, or a word could come out broken
+      // across two lines with no hyphen.
+      if (words[i].dataset.continuation) continue;
+      // Neighboring words with different formatting (bold vs. regular, a different
+      // run's slightly different line-height) can land a few px apart in top even
+      // while genuinely on the same visual line — much less than the full line
+      // height a real new line differs by. Too small an epsilon here misreads that
+      // jitter as a new line and inserts a break mid-sentence (once even landing a
+      // real, plain word like "located" alone at the top of the next line).
+      const SAME_LINE_EPSILON_PX = 6;
+      if (tops[i] > lineTop + SAME_LINE_EPSILON_PX) {
+        words[i].before(document.createElement('br'));
+        lineTop = tops[i];
+      }
+    }
+  });
+}
+
+function wrapWordsInSpans(p) {
+  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    // Whitespace-only nodes (a run boundary can put a space in its own separately
+    // formatted span) must still be collected, even though they're left untouched
+    // below — skipping them here meant the continuation tracking never saw them,
+    // so a word right after one incorrectly read as a no-space continuation of
+    // whatever word came before the space and never got a line-break candidacy of
+    // its own ("Emily" glued to the preceding "and" that way, so a real new line
+    // there had nowhere to insert a <br> and "Emily" just fell to the next line
+    // wherever html2canvas's own — unreliable — reflow happened to put it).
+    if (node.nodeValue) textNodes.push(node);
+  }
+  // Tracks whether the content immediately before the next word-span, anywhere
+  // earlier in the paragraph (possibly in a different original run/span), ended
+  // in whitespace — false means that next span is a continuation fragment of the
+  // same source word, not the start of a new one.
+  let lastEndedWithWhitespace = true;
+  textNodes.forEach((node) => {
+    const frag = document.createDocumentFragment();
+    // Keep each run of whitespace as a plain text node (so inter-word spacing,
+    // including justify's stretched spaces, renders exactly as before) and wrap
+    // only the non-whitespace runs so each word can be measured individually.
+    const parts = node.nodeValue.split(/(\s+)/);
+    parts.forEach((part) => {
+      if (!part) return;
+      if (/^\s+$/.test(part)) {
+        frag.appendChild(document.createTextNode(part));
+        lastEndedWithWhitespace = true;
+      } else {
+        const span = document.createElement('span');
+        span.className = 'w2c-word';
+        span.style.overflowWrap = 'normal';
+        span.style.wordBreak = 'normal';
+        span.style.whiteSpace = 'nowrap';
+        span.textContent = part;
+        if (!lastEndedWithWhitespace) span.dataset.continuation = 'true';
+        frag.appendChild(span);
+        lastEndedWithWhitespace = false;
+      }
+    });
+    node.replaceWith(frag);
+  });
+}
 
 async function renderDocxToPdf(docxBytes) {
   const container = document.createElement('div');
   container.style.position = 'fixed';
   container.style.left = '-10000px';
   container.style.top = '0';
-  container.style.zIndex = '-1';
   document.body.appendChild(container);
 
+  // Must NOT be a descendant of container: docx-preview's renderAsync clears the
+  // body container's innerHTML before appending rendered nodes into it, which would
+  // detach a nested style container (and the numbering/theme <style> rules it holds)
+  // from the live document before html2canvas ever sees it — silently dropping all
+  // numbered-list markers ("1.", "(a)", etc.) and other stylesheet-driven formatting
+  // from the exported PDF even though inline per-run formatting still renders fine.
   const styleContainer = document.createElement('div');
-  container.appendChild(styleContainer);
+  document.body.appendChild(styleContainer);
 
   try {
     const blob = new Blob([docxBytes], {
@@ -2658,27 +3305,83 @@ async function renderDocxToPdf(docxBytes) {
       inWrapper: true,
       breakPages: true,
       ignoreLastRenderedPageBreak: false,
+      // Without this, docx-preview renders every Word tab character as a
+      // fixed small em-space instead of computing where it should actually
+      // land — its own tab-stop system (the class fixTemplateTabStops below
+      // corrects) only runs when this flag is on.
+      experimental: true,
     });
+
+    alignHeaderLogoRight(container);
+    fixNoSpacingParagraphMargins(container);
+    forceDocumentFont(container);
+    fixTemplateTabStops(container);
+    const footerAddressText = extractFooterAddressText(container);
+    clearFooterText(container);
+    removeEmptyNumberingStubs(container);
+    // Splits any docx-preview page taller than its own true US-Letter size
+    // into properly-sized ones (and relocates an orphaned section heading to
+    // the page it introduces) before anything is measured or rasterized below
+    // — the same repagination the live preview uses, so the two can never
+    // disagree on where a page actually breaks.
+    repaginateToLetterPages(container);
+    moveMainSignatureBlockToWitnessPage(container);
+    removeInitialFromClosingPages(container);
+    mergeSparseLastPageBack(container);
+    addInitialToPages(container, [2, 4]);
+    bakeInLineBreaks(container);
 
     const pageEls = Array.from(container.querySelectorAll('section.docx'));
     const pdfDoc = await PDFLib.PDFDocument.create();
+    const footerFont = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const FOOTER_SIZE = 8;
+    const FOOTER_MARGIN = 36; // matches the template's 0.5in page margin
+    const FOOTER_Y = 20;
+    let outputPageNumber = 0;
 
     for (const pageEl of pageEls) {
-      const canvas = await html2canvas(pageEl, { scale: 2, backgroundColor: '#ffffff' });
+      const canvas = await withWordBreakNeutralized(styleContainer, () =>
+        html2canvas(pageEl, { scale: 2, backgroundColor: '#ffffff' })
+      );
+
+      // Each pageEl is now already sized to this template's true US-Letter
+      // page, so it maps directly to one output page — no further slicing.
+      const scale = LETTER_WIDTH_PT / canvas.width;
+      const drawWidth = LETTER_WIDTH_PT;
+      const drawHeight = canvas.height * scale;
+      const pageHeight = Math.max(LETTER_HEIGHT_PT, drawHeight);
+
       const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
       const pngBytes = await pngBlob.arrayBuffer();
 
-      const pdfWidth = pageEl.offsetWidth * DOCX_PAGE_PX_TO_PT;
-      const pdfHeight = pageEl.offsetHeight * DOCX_PAGE_PX_TO_PT;
-
       const image = await pdfDoc.embedPng(pngBytes);
-      const page = pdfDoc.addPage([pdfWidth, pdfHeight]);
-      page.drawImage(image, { x: 0, y: 0, width: pdfWidth, height: pdfHeight });
+      const page = pdfDoc.addPage([LETTER_WIDTH_PT, pageHeight]);
+      const imageBottomY = pageHeight - drawHeight;
+      page.drawImage(image, { x: 0, y: imageBottomY, width: drawWidth, height: drawHeight });
+
+      outputPageNumber += 1;
+      if (footerAddressText) {
+        page.drawText(footerAddressText, {
+          x: FOOTER_MARGIN,
+          y: FOOTER_Y,
+          size: FOOTER_SIZE,
+          font: footerFont,
+        });
+      }
+      const pageNumberText = String(outputPageNumber);
+      const pageNumberWidth = footerFont.widthOfTextAtSize(pageNumberText, FOOTER_SIZE);
+      page.drawText(pageNumberText, {
+        x: LETTER_WIDTH_PT - FOOTER_MARGIN - pageNumberWidth,
+        y: FOOTER_Y,
+        size: FOOTER_SIZE,
+        font: footerFont,
+      });
     }
 
     return pdfDoc.save();
   } finally {
     document.body.removeChild(container);
+    document.body.removeChild(styleContainer);
   }
 }
 
@@ -2800,6 +3503,30 @@ function setManualFieldsStatus(message, isError = false) {
   manualFieldsStatus.classList.add('flash');
 }
 
+// Representative, Role, and Location are free-typed text, so this is where a
+// stray special character would actually come from a keystroke — Start Date
+// is populated from the date picker in a fixed "Month D, YYYY" format (via
+// syncStartDatePickerFromText, which needs its comma) and Billing Rate is
+// already a type="number" input the browser itself restricts, so neither
+// belongs in this filter.
+const NO_SPECIAL_CHARS_FIELDS = [manualRep, manualRole, manualLocation];
+const SPECIAL_CHARS_PATTERN = /[^a-zA-Z0-9 ]/g;
+NO_SPECIAL_CHARS_FIELDS.forEach((el) => {
+  el.addEventListener('input', () => {
+    const original = el.value;
+    const sanitized = original.replace(SPECIAL_CHARS_PATTERN, '');
+    if (sanitized === original) return;
+    // Re-deriving the caret from how much of the text *before* it survived
+    // sanitizing (rather than just shifting back by one) keeps this correct
+    // when a paste strips several characters at once, not only a single
+    // disallowed keystroke.
+    const caret = el.selectionStart ?? original.length;
+    const newCaret = original.slice(0, caret).replace(SPECIAL_CHARS_PATTERN, '').length;
+    el.value = sanitized;
+    el.setSelectionRange(newCaret, newCaret);
+  });
+});
+
 MANUAL_FIELD_INPUTS.forEach((el) => {
   el.addEventListener('input', () => {
     if (el.value.trim()) {
@@ -2811,6 +3538,13 @@ MANUAL_FIELD_INPUTS.forEach((el) => {
 });
 
 applyManualBtn.addEventListener('click', async () => {
+  // A pending debounced live-preview update (scheduleLivePreviewUpdate, 600ms) can
+  // still be queued from the user's last keystroke. If it fires while renderDocxToPdf
+  // below is mid-flight, its own concurrent docx-preview render into the preview
+  // iframe reproducibly makes html2canvas mismeasure this template's justified body
+  // text and split words mid-letter ("technic" / "al support") in the exported PDF.
+  clearTimeout(livePreviewTimer);
+
   const startedAt = Date.now();
   downloadPdfBtn.disabled = true;
   downloadWordBtn.disabled = true;
@@ -3126,7 +3860,24 @@ async function setDocumentPreview(docxBytes) {
       inWrapper: true,
       breakPages: true,
       ignoreLastRenderedPageBreak: false,
+      // Without this, docx-preview renders every Word tab character as a
+      // fixed small em-space instead of computing where it should actually
+      // land — its own tab-stop system (the class fixTemplateTabStops below
+      // corrects) only runs when this flag is on.
+      experimental: true,
     });
+
+    alignHeaderLogoRight(doc.body);
+    fixNoSpacingParagraphMargins(doc.body);
+    forceDocumentFont(doc.body);
+    fixTemplateTabStops(doc.body);
+    removeEmptyNumberingStubs(doc.body);
+    repaginateToLetterPages(doc.body);
+    moveMainSignatureBlockToWitnessPage(doc.body);
+    removeInitialFromClosingPages(doc.body);
+    mergeSparseLastPageBack(doc.body);
+    addInitialToPages(doc.body, [2, 4]);
+    normalizePreviewFooter(doc.body);
 
     applyPreviewZoomStyleOverrides(doc);
     applyPreviewZoom(false);
