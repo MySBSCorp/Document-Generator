@@ -197,7 +197,18 @@ function isW9UploadCandidate(f) {
   return f.type === 'application/pdf' || /\.pdf$/i.test(f.name) || isImageFile(f);
 }
 
+function isPdfFile(f) {
+  return f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+}
+
 function addFiles(fileArray) {
+  const nonPdf = fileArray.some((f) => !isPdfFile(f));
+  if (nonPdf) {
+    fileInput.value = '';
+    setStatus('File not accepted. Please upload only PDF files', true);
+    return;
+  }
+
   uploadedFiles = fileArray;
   renderFileList();
   setStatus(`${uploadedFiles.length} file(s) ready.`);
