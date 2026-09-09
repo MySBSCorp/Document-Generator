@@ -2690,6 +2690,41 @@ function forceDocumentFont(root) {
   });
 }
 
+// repaginateToLetterPages below decides every page break from getBoundingClientRect()
+// measurements taken right after this point, so anything that can still resize an
+// element afterward — a web font swapping in, an embedded header/logo image finishing
+// decode, or a style recalculation the browser hasn't flushed yet — quietly changes
+// where a block's bottom edge lands relative to those measurements. Locally, these all
+// tend to already be warm (cached font, cached image decode) by the time this runs, so
+// the race never shows up; on a fresh deployed load none of that is cached yet, so a
+// block can measure short here and only reach its true height after the split has
+// already been decided — producing the exact symptom of one paragraph or table ending
+// up sliced across the page it was assigned and the one after it. Waiting for fonts,
+// every embedded image's decode, and two animation frames (one for the browser to
+// apply any pending style/layout work, one more so a decode that resolved mid-frame is
+// reflected before the next paint) before pagination runs removes the race instead of
+// depending on it happening to already be settled.
+async function waitForStableLayout(root) {
+  const doc = root.ownerDocument || document;
+  if (doc.fonts && doc.fonts.ready) {
+    await doc.fonts.ready.catch(() => {});
+  }
+  const images = Array.from(root.querySelectorAll('img'));
+  await Promise.all(
+    images.map((img) => {
+      if (img.complete) return Promise.resolve();
+      return new Promise((resolve) => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      });
+    })
+  );
+  const raf = (win) => new Promise((resolve) => win.requestAnimationFrame(resolve));
+  const win = doc.defaultView || window;
+  await raf(win);
+  await raf(win);
+}
+
 // docx-preview computes every custom Word tab stop's width (tabStopClass, sized
 // by updateTabStop/refreshTabStops) from getBoundingClientRect() measurements
 // taken while the rendered nodes are still detached from the document —
@@ -3335,6 +3370,7 @@ async function renderDocxToPdf(docxBytes) {
     // the page it introduces) before anything is measured or rasterized below
     // — the same repagination the live preview uses, so the two can never
     // disagree on where a page actually breaks.
+    await waitForStableLayout(container);
     repaginateToLetterPages(container);
     moveMainSignatureBlockToWitnessPage(container);
     removeInitialFromClosingPages(container);
@@ -3883,6 +3919,7 @@ async function setDocumentPreview(docxBytes) {
     forceDocumentFont(doc.body);
     fixTemplateTabStops(doc.body);
     removeEmptyNumberingStubs(doc.body);
+    await waitForStableLayout(doc.body);
     repaginateToLetterPages(doc.body);
     moveMainSignatureBlockToWitnessPage(doc.body);
     removeInitialFromClosingPages(doc.body);
