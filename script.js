@@ -3174,9 +3174,21 @@ function removeInitialFromClosingPages(root) {
 // above can leave the Exhibit A content that used to share a page with it
 // reflowing such that just one trailing field ends up alone starting the
 // very last page, with everything else back on the page before it. This
-// only ever looks at the last page in the whole document, and only acts
-// when it holds exactly one real line — narrower than a general rule, so it
-// can't affect pagination anywhere earlier in the document.
+// only ever looks at the last page in the whole document, and only acts when
+// its real content amounts to a small fraction of a page — narrower than a
+// general rule, so it can't affect pagination anywhere earlier in the
+// document.
+//
+// This used to require *exactly* one real child instead of measuring height.
+// That exact count is itself sensitive to font rendering: the same "just one
+// trailing field" content can wrap into a different number of DOM
+// lines/spans depending on the device's font metrics, so the same
+// genuinely-sparse last page could pass this check on one device and silently
+// fail to merge on another, leaving that device with an extra near-empty
+// page. Measuring the real content's rendered height instead — using the
+// same "under a third of a page" threshold as the blank-run orphan check
+// above — recognizes the same sparse page regardless of exactly how many
+// child elements its content happened to wrap into.
 function mergeSparseLastPageBack(root) {
   const pageEls = Array.from(root.querySelectorAll('section.docx'));
   if (pageEls.length < 2) return;
@@ -3186,7 +3198,13 @@ function mergeSparseLastPageBack(root) {
   const prevArticle = prevPage.querySelector('article');
   if (!lastArticle || !prevArticle) return;
   const realChildren = Array.from(lastArticle.children).filter((c) => c.textContent.trim());
-  if (realChildren.length !== 1) return;
+  if (!realChildren.length) return;
+  const pxPerPt = lastPage.getBoundingClientRect().width / LETTER_WIDTH_PT;
+  const MAX_SPARSE_HEIGHT_PX = (LETTER_HEIGHT_PT * pxPerPt) / 3;
+  const pageTop = lastPage.getBoundingClientRect().top;
+  const contentTop = realChildren[0].getBoundingClientRect().top - pageTop;
+  const contentBottom = realChildren[realChildren.length - 1].getBoundingClientRect().bottom - pageTop;
+  if (contentBottom - contentTop > MAX_SPARSE_HEIGHT_PX) return;
   Array.from(lastArticle.children).forEach((c) => prevArticle.appendChild(c));
   lastPage.remove();
 }
@@ -3958,6 +3976,13 @@ function setPreviewPanelOpen(open) {
 previewToggleBtn.addEventListener('click', () => {
   setPreviewPanelOpen(!previewPanel.classList.contains('is-open'));
 });
+
+// Below 900px the fixed toggle tab hides itself while the panel is open (it
+// would otherwise float on top of the document text), so this in-header
+// button is the only way to close the panel there — it drives the same
+// setPreviewPanelOpen the tab itself uses.
+const previewCloseBtn = document.getElementById('previewCloseBtn');
+previewCloseBtn.addEventListener('click', () => setPreviewPanelOpen(false));
 
 let activePreviewTab = 'generated';
 

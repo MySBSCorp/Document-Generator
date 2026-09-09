@@ -1988,13 +1988,35 @@ body {
   box-shadow: rgb(0 0 0 / 16%) 0 4px 14px;
 }
 
-.preview-toggle[aria-expanded="true"] {
+/* The rotated tab flipping into a "Close" state itself (previously here) is
+   replaced by always hiding the tab once the panel is open and showing
+   .preview-panel-close inside the panel's own header instead — see both
+   rules below. A side tab positioned for a closed panel has no width or
+   position that stays clear of the document text once the panel (and, at
+   100% zoom, a US-Letter page inside it) is actually open, at any viewport
+   width up to a very wide desktop window. */
+.preview-toggle[aria-expanded="true"] { display: none; }
+
+.preview-panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 1px solid #000;
+  border-radius: 50%;
+  background: white;
+  color: #1a1a1a;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.preview-panel-close:hover {
   background-color: hsl(261deg 80% 48%);
   color: white;
 }
-
-.preview-toggle[aria-expanded="true"] .preview-toggle-icon svg:first-child { display: none; }
-.preview-toggle[aria-expanded="true"] .preview-toggle-icon-close { display: block; }
 
 .preview-panel {
   position: fixed;
@@ -2259,7 +2281,11 @@ body {
   display: none;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 900px) {
+  /* Below the same width where the two-pane layout stacks, a 50vw side panel
+     is too narrow to read a US-Letter page in, so it goes full width here
+     too — the toggle-vs-close-button fix above is width-independent and
+     already covers every size. */
   .preview-panel { width: 100vw; }
   .preview-panel-header { padding: 14px 16px; gap: 10px; flex-wrap: wrap; }
   .preview-panel-header h3 { font-size: 0.95rem; }
