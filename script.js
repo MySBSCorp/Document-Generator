@@ -1,11 +1,30 @@
 import PizZip from './vendor/pizzip-3.2.0.esm.js';
 
 import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
-import Tesseract from 'tesseract.js';
-import * as PDFLib from 'pdf-lib';
-import { renderAsync as renderDocxAsync } from 'docx-preview';
-import html2canvas from 'html2canvas';
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+// Loaded on first use instead of at page load — each is only needed once the
+// user reaches the feature it powers (OCR, PDF generation, doc preview),
+// and together they're the bulk of the app's bundle size.
+let tesseractModulePromise;
+function loadTesseract() {
+  return (tesseractModulePromise ??= import('tesseract.js').then((m) => m.default));
+}
+
+let pdfLibModulePromise;
+function loadPdfLib() {
+  return (pdfLibModulePromise ??= import('pdf-lib'));
+}
+
+let docxPreviewModulePromise;
+function loadDocxPreview() {
+  return (docxPreviewModulePromise ??= import('docx-preview'));
+}
+
+let html2canvasModulePromise;
+function loadHtml2Canvas() {
+  return (html2canvasModulePromise ??= import('html2canvas').then((m) => m.default));
+}
 
 if (window.top !== window.self) {
   window.top.location = window.self.location.href;
@@ -325,6 +344,17 @@ function refreshW9ValidationStatus() {
   return valid;
 }
 
+// Dev/test-only hook: lets the Playwright suite inject already-extracted W-9
+// fields directly, skipping the OCR pass entirely. Same gating as the auth
+// bypass — never present in a production build.
+if (import.meta.env.DEV && import.meta.env.VITE_E2E_BYPASS_AUTH === 'true') {
+  window.__e2eInjectW9Data = (data) => {
+    extractedW9Data = data;
+    renderW9Summary(extractedW9Data);
+    refreshW9ValidationStatus();
+  };
+}
+
 function formatTaxId(digits, type) {
   if (digits.length !== 9) return digits;
   if (type === 'SSN') return `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}`;
@@ -595,6 +625,7 @@ const TESSERACT_VENDORED_PATHS = {
 // tinDigitsFromCrop). pageSegMode defaults to Tesseract's own default (PSM
 // 3, fully-automatic) when omitted.
 async function ocrLinesWithBoxes(canvas, pageSegMode) {
+  const Tesseract = await loadTesseract();
   const worker = await Tesseract.createWorker('eng', undefined, TESSERACT_VENDORED_PATHS);
   if (pageSegMode) await worker.setParameters({ tessedit_pageseg_mode: pageSegMode });
   const result = await worker.recognize(canvas, {}, { blocks: true });
@@ -672,6 +703,7 @@ function downscaleTo(source, maxDim) {
 // unrotated rather than flipped on a coin toss.
 async function pickBestOrientation(rawCanvas) {
   const probeBase = downscaleTo(rawCanvas, ORIENTATION_PROBE_MAX_DIM);
+  const Tesseract = await loadTesseract();
   const worker = await Tesseract.createWorker('eng', undefined, TESSERACT_VENDORED_PATHS);
   let bestDegrees = 0;
   let bestConfidence = -1;
@@ -1396,6 +1428,7 @@ async function tinDigitsFromCrop(cropCanvas) {
   // One worker for every digit-OCR attempt this crop needs (up to a couple
   // dozen, across SSN/EIN × 3 scales × 2 crop variants) instead of one per
   // attempt — see the note on ocrDigitRowAtBbox.
+  const Tesseract = await loadTesseract();
   const digitWorker = await Tesseract.createWorker('eng', undefined, TESSERACT_VENDORED_PATHS);
   await digitWorker.setParameters({
     tessedit_char_whitelist: '0123456789-',
@@ -1492,6 +1525,7 @@ async function ocrTinBoxDigits(canvas, pageLines) {
 async function addressTextFromCrop(cropCanvas) {
   if (!cropCanvas) return '';
   const preprocessed = grayscaleContrastCanvas(cropCanvas);
+  const Tesseract = await loadTesseract();
   const worker = await Tesseract.createWorker('eng', undefined, TESSERACT_VENDORED_PATHS);
   await worker.setParameters({ tessedit_pageseg_mode: '4' });
   const result = await worker.recognize(preprocessed);
@@ -1545,6 +1579,7 @@ async function imageFileToCanvas(file) {
 // so the dynamic label-anchoring tier can search the whole page for free
 // instead of paying for a second full-page OCR pass.
 async function ocrPageWithLines(canvas, onProgress) {
+  const Tesseract = await loadTesseract();
   const worker = await Tesseract.createWorker('eng', undefined, {
     logger: onProgress,
     ...TESSERACT_VENDORED_PATHS,
@@ -3346,6 +3381,11 @@ function wrapWordsInSpans(p) {
 }
 
 async function renderDocxToPdf(docxBytes) {
+  const [{ renderAsync: renderDocxAsync }, PDFLib, html2canvas] = await Promise.all([
+    loadDocxPreview(),
+    loadPdfLib(),
+    loadHtml2Canvas(),
+  ]);
   const container = document.createElement('div');
   container.style.position = 'fixed';
   container.style.left = '-10000px';
@@ -3914,6 +3954,7 @@ function attachWheelZoom(doc) {
 async function setDocumentPreview(docxBytes) {
   previewLoading.hidden = false;
   try {
+    const { renderAsync: renderDocxAsync } = await loadDocxPreview();
     const blob = new Blob([docxBytes], {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     });

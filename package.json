@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node tests/e2e.js",
+    "test:browsers": "node tests/e2e-cross-browser.js",
     "test:extraction": "node tests/w9-extraction.test.js"
   },
   "dependencies": {
@@ -19,7 +20,7 @@
     "html2canvas": "^1.4.1",
     "pako": "^2.1.0",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^3.11.174",
+    "pdfjs-dist": "^4.10.38",
     "pizzip": "^3.2.0",
     "tesseract.js": "^7.0.0"
   },
