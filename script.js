@@ -2876,6 +2876,23 @@ function fixNoSpacingParagraphMargins(root) {
   });
 }
 
+// The template's own document.xml carries exactly one paragraph shading rule
+// (w:shd fill="FFFFFF") — an opaque white fill, almost certainly a leftover
+// from someone highlighting that text in Word and it saving with a white
+// fill instead of "no fill" rather than an intentional design choice (Word
+// itself shows no visible difference between white shading and no shading
+// on its own white page). docx-preview renders w:shd literally as a CSS
+// background-color, though, so it shows up here as a visibly boxed-in
+// paragraph against the page's slightly different white. Only strips white
+// specifically — a real (non-white) highlight elsewhere in the template
+// would still render.
+function removeStrayWhiteShading(root) {
+  root.querySelectorAll('section.docx [style*="background-color"]').forEach((el) => {
+    const bg = getComputedStyle(el).backgroundColor;
+    if (bg === 'rgb(255, 255, 255)') el.style.backgroundColor = '';
+  });
+}
+
 // docx-preview can't render a Word feature this template's footer relies on: the
 // page-number frame (w:framePr) and its PAGE field, plus the fact the template only
 // fills in its "default" footer while leaving the "even page" footer (word/footer1.xml)
@@ -3031,6 +3048,14 @@ function repaginateToLetterPages(root) {
   // fit in 792pt but not in the dpi-mismatched pixel count standing in for it.
   const pxPerPt = pageEls[0].getBoundingClientRect().width / LETTER_WIDTH_PT;
   const PAGE_HEIGHT_PX = LETTER_HEIGHT_PT * pxPerPt;
+  // A block landing within a couple points of the page boundary renders as
+  // fitting or not depending on sub-pixel rounding and font hinting that
+  // differ slightly between devices/OSes even with the exact same bundled
+  // font file — pushing an inconsistent split (or an extra page) right at
+  // that edge on some machines but not others. Treating anything within
+  // this margin as still fitting keeps that boundary decision the same
+  // everywhere instead of riding right on the edge of a coin flip.
+  const PAGE_HEIGHT_TOLERANCE_PX = 3 * pxPerPt;
 
   function splitOversizedPagesOnce() {
     let splitAny = false;
@@ -3053,7 +3078,7 @@ function repaginateToLetterPages(root) {
       let splitIndex = -1;
       for (let c = 1; c < children.length; c++) {
         const bottom = children[c].getBoundingClientRect().bottom - pageTop;
-        if (bottom > PAGE_HEIGHT_PX) {
+        if (bottom > PAGE_HEIGHT_PX + PAGE_HEIGHT_TOLERANCE_PX) {
           splitIndex = c;
           break;
         }
@@ -3439,6 +3464,7 @@ async function renderDocxToPdf(docxBytes) {
 
     alignHeaderLogoRight(container);
     fixNoSpacingParagraphMargins(container);
+    removeStrayWhiteShading(container);
     forceDocumentFont(container);
     const footerAddressText = extractFooterAddressText(container);
     clearFooterText(container);
@@ -4009,6 +4035,7 @@ async function setDocumentPreview(docxBytes) {
 
     alignHeaderLogoRight(doc.body);
     fixNoSpacingParagraphMargins(doc.body);
+    removeStrayWhiteShading(doc.body);
     forceDocumentFont(doc.body);
     removeEmptyNumberingStubs(doc.body);
     await waitForStableLayout(doc.body);
