@@ -3279,7 +3279,14 @@ function mergeSparseLastPageBack(root) {
   const prevArticle = prevPage.querySelector('article');
   if (!lastArticle || !prevArticle) return;
   const realChildren = Array.from(lastArticle.children).filter((c) => c.textContent.trim());
-  if (!realChildren.length) return;
+  // No real content at all (just an empty paragraph or two) is the most
+  // sparse a trailing page can be — strictly more so than the height check
+  // below, which this would otherwise skip entirely and leave behind as a
+  // wholly blank last page.
+  if (!realChildren.length) {
+    lastPage.remove();
+    return;
+  }
   const pxPerPt = lastPage.getBoundingClientRect().width / LETTER_WIDTH_PT;
   const MAX_SPARSE_HEIGHT_PX = (LETTER_HEIGHT_PT * pxPerPt) / 3;
   const pageTop = lastPage.getBoundingClientRect().top;
