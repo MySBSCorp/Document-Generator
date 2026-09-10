@@ -1,3 +1,39 @@
+/* Tinos: metric-compatible with Times New Roman (SIL Open Font License),
+   bundled so the MSA preview/PDF render identically on every device instead
+   of depending on whichever serif font (or substitute) happens to be
+   installed locally — see forceDocumentFont() in script.js, which is what
+   actually uses this. Windows ships real Times New Roman, but macOS,
+   Linux, and mobile devices don't, or ship one with different metrics,
+   which threw off the signature block's pixel-measured tab-stop spacing. */
+@font-face {
+  font-family: 'Tinos';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./vendor/fonts/tinos-regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Tinos';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./vendor/fonts/tinos-bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Tinos';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./vendor/fonts/tinos-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Tinos';
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./vendor/fonts/tinos-bolditalic.woff2') format('woff2');
+}
+
 * { box-sizing: border-box; }
 
 #authGate {

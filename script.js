@@ -3,6 +3,22 @@ import PizZip from './vendor/pizzip-3.2.0.esm.js';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
+import tinosRegularUrl from './vendor/fonts/tinos-regular.woff2?url';
+import tinosBoldUrl from './vendor/fonts/tinos-bold.woff2?url';
+import tinosItalicUrl from './vendor/fonts/tinos-italic.woff2?url';
+import tinosBoldItalicUrl from './vendor/fonts/tinos-bolditalic.woff2?url';
+
+// Same font bundled via style.css's @font-face for the main document (see
+// that file for why) — the preview panel renders into its own isolated
+// iframe document (see writeIframeShell below) that doesn't inherit the
+// parent page's stylesheet, so it needs this declared again here.
+const TINOS_FONT_FACE_CSS = `
+  @font-face { font-family: 'Tinos'; font-style: normal; font-weight: 400; font-display: swap; src: url('${tinosRegularUrl}') format('woff2'); }
+  @font-face { font-family: 'Tinos'; font-style: normal; font-weight: 700; font-display: swap; src: url('${tinosBoldUrl}') format('woff2'); }
+  @font-face { font-family: 'Tinos'; font-style: italic; font-weight: 400; font-display: swap; src: url('${tinosItalicUrl}') format('woff2'); }
+  @font-face { font-family: 'Tinos'; font-style: italic; font-weight: 700; font-display: swap; src: url('${tinosBoldItalicUrl}') format('woff2'); }
+`;
+
 // Loaded on first use instead of at page load — each is only needed once the
 // user reaches the feature it powers (OCR, PDF generation, doc preview),
 // and together they're the bulk of the app's bundle size.
@@ -2720,8 +2736,13 @@ function alignHeaderLogoRight(root) {
 // computed value, and a literal "!important" suffix in that text confused its
 // font-matching enough to silently fall back to a generic sans-serif font.
 function forceDocumentFont(root) {
+  // Tinos first: a bundled, metric-compatible substitute for Times New Roman
+  // (see TINOS_FONT_FACE_CSS above) so every device renders this template
+  // with the exact same glyph widths the fixed-position math in
+  // fixTemplateTabStops below assumes. Real Times New Roman only remains as
+  // a fallback for the rare case the bundled font fails to load.
   root.querySelectorAll('section.docx, section.docx *').forEach((el) => {
-    el.style.fontFamily = '"Times New Roman", Times, serif';
+    el.style.fontFamily = '"Tinos", "Times New Roman", Times, serif';
   });
 }
 
@@ -3871,8 +3892,14 @@ function writeIframeShell(iframe) {
   doc.open();
   doc.write(
     '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
+      TINOS_FONT_FACE_CSS +
       'html,body{margin:0;background:#fff;} body{cursor:grab;}' +
-      '</style></head><body></body></html>'
+      // docx-preview's renderAsync wipes whatever style container it's given
+      // (styleContainer.innerHTML = "") before writing its own generated CSS
+      // into it — so it must never be handed <head> itself, or it erases the
+      // @font-face rule above along with everything else in this <style>.
+      // This div is that dedicated, disposable container instead.
+      '</style><div id="docxStyleContainer"></div></head><body></body></html>'
   );
   doc.close();
   return doc;
@@ -3969,7 +3996,7 @@ async function setDocumentPreview(docxBytes) {
     previewFrame.hidden = false;
     previewEmptyState.hidden = true;
 
-    await renderDocxAsync(blob, doc.body, doc.head, {
+    await renderDocxAsync(blob, doc.body, doc.getElementById('docxStyleContainer'), {
       inWrapper: true,
       breakPages: true,
       ignoreLastRenderedPageBreak: false,
