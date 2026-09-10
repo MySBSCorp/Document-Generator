@@ -3419,7 +3419,6 @@ async function renderDocxToPdf(docxBytes) {
     alignHeaderLogoRight(container);
     fixNoSpacingParagraphMargins(container);
     forceDocumentFont(container);
-    fixTemplateTabStops(container);
     const footerAddressText = extractFooterAddressText(container);
     clearFooterText(container);
     removeEmptyNumberingStubs(container);
@@ -3429,6 +3428,14 @@ async function renderDocxToPdf(docxBytes) {
     // — the same repagination the live preview uses, so the two can never
     // disagree on where a page actually breaks.
     await waitForStableLayout(container);
+    // Must run after the font-load/layout wait above, not before: it measures
+    // getBoundingClientRect() on the tab-stop spans to compute wordSpacing,
+    // and forceDocumentFont() only just requested the real font a moment
+    // earlier — measuring before it's actually loaded bakes in fallback-font
+    // glyph widths, so the real font then reflows the line to a different
+    // width than what was fixed, most visibly wrapping the second signature
+    // column onto its own line.
+    fixTemplateTabStops(container);
     repaginateToLetterPages(container);
     moveMainSignatureBlockToWitnessPage(container);
     removeInitialFromClosingPages(container);
@@ -3976,9 +3983,11 @@ async function setDocumentPreview(docxBytes) {
     alignHeaderLogoRight(doc.body);
     fixNoSpacingParagraphMargins(doc.body);
     forceDocumentFont(doc.body);
-    fixTemplateTabStops(doc.body);
     removeEmptyNumberingStubs(doc.body);
     await waitForStableLayout(doc.body);
+    // Must run after the font-load/layout wait above, not before — see the
+    // matching note in renderDocxToPdf.
+    fixTemplateTabStops(doc.body);
     repaginateToLetterPages(doc.body);
     moveMainSignatureBlockToWitnessPage(doc.body);
     removeInitialFromClosingPages(doc.body);
