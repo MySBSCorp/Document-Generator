@@ -3920,12 +3920,20 @@ function writeIframeShell(iframe) {
     '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
       TINOS_FONT_FACE_CSS +
       'html,body{margin:0;background:#fff;} body{cursor:grab;}' +
-      // docx-preview's renderAsync wipes whatever style container it's given
-      // (styleContainer.innerHTML = "") before writing its own generated CSS
-      // into it — so it must never be handed <head> itself, or it erases the
-      // @font-face rule above along with everything else in this <style>.
-      // This div is that dedicated, disposable container instead.
-      '</style><div id="docxStyleContainer"></div></head><body></body></html>'
+      '</style></head><body>' +
+      // docx-preview's renderAsync wipes whatever style container AND whatever
+      // body/content container it's given (both get their own innerHTML = "")
+      // before writing its generated output into them — so both need their own
+      // dedicated, disposable element, and neither can be nested inside the
+      // other or a re-render of one wipes the other along with it. (A <div>
+      // can't legally live inside <head> either — browsers silently relocate
+      // invalid flow content like this out to <body>, which is exactly how an
+      // earlier version of this ended up nested inside the content container
+      // instead: it looked like it was in <head>, but by the time docx-preview
+      // ran, the parser had already moved it into <body>.)
+      '<div id="docxContentContainer"></div>' +
+      '<div id="docxStyleContainer"></div>' +
+      '</body></html>'
   );
   doc.close();
   return doc;
@@ -4022,7 +4030,7 @@ async function setDocumentPreview(docxBytes) {
     previewFrame.hidden = false;
     previewEmptyState.hidden = true;
 
-    await renderDocxAsync(blob, doc.body, doc.getElementById('docxStyleContainer'), {
+    await renderDocxAsync(blob, doc.getElementById('docxContentContainer'), doc.getElementById('docxStyleContainer'), {
       inWrapper: true,
       breakPages: true,
       ignoreLastRenderedPageBreak: false,
