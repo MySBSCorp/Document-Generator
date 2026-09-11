@@ -1,0 +1,284 @@
+{
+  "w9_01_individual_clean.pdf": {
+    "companyName": "Emily Carter Photography",
+    "taxId": "900-11-4823",
+    "taxIdType": "SSN",
+    "address": "1425 Cedar Grove Drive, Nashville, TN 37205"
+  },
+  "w9_04_llc_c_flatbed.pdf": {
+    "companyName": "Meridian Data Insights",
+    "taxId": "84-2156097",
+    "taxIdType": "EIN",
+    "address": "8800 E lliff Avenue, Ste 350, Denver, CO 80231"
+  },
+  "w9_05_llc_p_clean.pdf": {
+    "companyName": "Blackwood Property Partners",
+    "taxId": "27-8834521",
+    "taxIdType": "EIN",
+    "address": "1209 Orange Street, Wilmington, DE 19801"
+  },
+  "w9_06_c_corp_camscanner.pdf": {
+    "companyName": "Coastal Ventures",
+    "taxId": "57-4188023",
+    "taxIdType": "EIN",
+    "address": "77 Broad Street, Suite 500, Charleston, SC 29401"
+  },
+  "w9_10_individual_clean.pdf": {
+    "companyName": "Chen Freelance Development",
+    "taxId": "900-44-8817",
+    "taxIdType": "SSN",
+    "address": "2845 SE Belmont Street, Portland, OR 97214"
+  },
+  "w9_11_individual_clean.pdf": {
+    "companyName": "Nakamura Editorial Services",
+    "taxId": "900-55-3241",
+    "taxIdType": "SSN",
+    "address": "2837 W Diversey Parkway, Unit 3N, Chicago, IL 60647"
+  },
+  "w9_12_sole_prop_dba_copier.pdf": {
+    "companyName": "O'Brien Auto Repair",
+    "taxId": "900-66-1204",
+    "taxIdType": "SSN",
+    "address": "184 Washington Street, Boston, MA 02135"
+  },
+  "w9_14_llc_s_dim_photo.pdf": {
+    "companyName": "Cypress Grove Advisors",
+    "taxId": "86-3204871",
+    "taxIdType": "EIN",
+    "address": "2400 W Camelback Road, Ste 400, Phoenix, AZ 85015"
+  },
+  "w9_15_llc_c_clean.pdf": {
+    "companyName": "Northgate Properties",
+    "taxId": "43-8712905",
+    "taxIdType": "EIN",
+    "address": "4520 Main Street, Suite 900, Kansas City, MO 64111"
+  },
+  "w9_16_c_corp_flatbed.pdf": {
+    "companyName": "Redwood Systems",
+    "taxId": "77-4192058",
+    "taxIdType": "EIN",
+    "address": "1250 Bordeaux Drive, Sunnyvale, CA 94089"
+  },
+  "w9_20_individual_clean.pdf": {
+    "companyName": "Jonas Mikkelsen Music",
+    "taxId": "900-88-6524",
+    "taxIdType": "SSN",
+    "address": "722 E Locust Street, Apt 5, Milwaukee, WI 53202"
+  },
+  "w9_09_trust_fax.pdf": {
+    "companyName": "Ashford Trust — 2019",
+    "taxId": "95-6621340",
+    "taxIdType": "EIN",
+    "address": "7250 La Jolla Boulevard, San Diego, CA 92037"
+  },
+  "w9_19_trust_copier.pdf": {
+    "companyName": "Beaumont Trust — Est. 2015",
+    "taxId": "72-8140563",
+    "taxIdType": "EIN",
+    "address": "1435 St. Charles Avenue, New Orleans, LA 70130"
+  },
+  "w9_03_smllc_copier.pdf": {
+    "companyName": "Tanaka Web Studio LLC",
+    "taxId": "900-33-2158",
+    "taxIdType": "SSN",
+    "address": "4152 Fremont Ave N, Suite 210, Seattle, WA 98103"
+  },
+  "w9_08_partnership_copier.pdf": {
+    "companyName": "S&K Legal Services",
+    "taxId": "23-8814729",
+    "taxIdType": "EIN",
+    "address": "1616 Walnut Street, 22nd Floor, Philadelphia, PA 19103"
+  },
+  "w9_18_partnership_fax.pdf": {
+    "companyName": "FRN Attorneys at Law",
+    "taxId": "36-4728105",
+    "taxIdType": "EIN",
+    "address": "233 S Wacker Drive, Ste 8200, Chicago, IL 60606"
+  },
+  "w9_17_s_corp_camscanner.pdf": {
+    "companyName": "Willow Creek",
+    "taxId": "87-3945210",
+    "taxIdType": "EIN",
+    "address": "215 S Main Street, Ste 1500, Salt Lake City, UT 84111"
+  },
+  "w9_dup_camscanner_02.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_camscanner_03.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_camscanner_05.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_clean_01.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_clean_02.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_clean_03.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_clean_04.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_clean_05.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_copier_01.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_copier_02.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_copier_03.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_copier_04.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_dim_photo_02.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_dim_photo_04.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_dim_photo_05 (1).pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_dim_photo_05.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_flatbed_01.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_flatbed_02.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_flatbed_03.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_flatbed_04.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_flatbed_05.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_camscanner_01.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_07_s_corp_dim_photo.pdf": {
+    "companyName": "Pinewood Studio",
+    "taxId": "41-9273186",
+    "taxIdType": "EIN",
+    "address": "312 N 3rd Avenue, Loft 12, Minneapolis, MN 55401"
+  },
+  "w9_dup_dim_photo_01.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_dim_photo_03.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_fax_01.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_fax_02.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_fax_03.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_fax_04.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  },
+  "w9_dup_fax_05.pdf": {
+    "companyName": "Blackstone Ridge Partners",
+    "taxId": "58-3947128",
+    "taxIdType": "EIN",
+    "address": "1250 Peachtree Street NE, Suite 700, Atlanta, GA 30309"
+  }
+}

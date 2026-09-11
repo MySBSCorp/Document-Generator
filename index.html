@@ -3,36 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<!-- Defense-in-depth: even though uploaded filenames are now rendered via
-     textContent (not innerHTML), this CSP blocks inline/injected scripts and
-     any script/connection host beyond the one CDN this app actually uses, so
-     a future XSS bug or a compromised third-party script can't exfiltrate
-     the SSN/EIN data this app processes. cdn.jsdelivr.net is no longer
-     needed anywhere — pizzip/docx/pako and tesseract.js's own worker/WASM
-     core/language data are all vendored locally under vendor/ (see
-     vendor/README.md). Only cdnjs.cloudflare.com remains, for the three
-     SRI-verified <script> tags below. -->
-<!-- connect-src addition: MSAL's silent-renewal (acquireTokenSilent) does a
-     fetch/XHR call to Entra's token endpoint after the interactive
-     loginRedirect()/logoutRedirect() flow lands back on this page (see
-     auth.js / authConfig.js) — sign-in/out themselves are full top-level
-     navigations, not fetch calls, so they aren't what connect-src governs
-     here. No Microsoft Graph (or any other API) host is listed — this app
-     only requests openid/profile/email scopes and reads identity off the
-     ID token's own claims, so it never acquires or sends a Graph access
-     token. frame-src: MSAL opens a hidden iframe against Entra's authorize
-     endpoint for silent SSO checks (also part of acquireTokenSilent). -->
-
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com; worker-src 'self' blob:; connect-src 'self' https://cdnjs.cloudflare.com https://login.microsoftonline.com; frame-src https://login.microsoftonline.com; img-src 'self' data: blob:; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://login.microsoftonline.com; frame-src https://login.microsoftonline.com blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Document Generator</title>
-<link rel="stylesheet" href="style.css?v=20260813-8">
+<link rel="stylesheet" href="style.css?v=20260902-26">
 </head>
 <body>
 
-  <!-- Blocks all app content (including the intro animation) until MSAL
-       confirms an authenticated, allow-listed Entra ID session. See
-       auth-ui.js. Flat full-bleed layout — deliberately not a boxed
-       card — matching the rest of the site's .hero typography. -->
   <div id="authGate" data-state="loading">
     <p class="eyebrow">Document Generator</p>
 
@@ -43,7 +19,7 @@
 
     <div class="auth-panel" data-auth-panel="unauthenticated">
       <h1>Sign in to continue</h1>
-      <p class="auth-message">Use your Microsoft work or school account to access this app.</p>
+      <p class="auth-message">Sign in with an authorized Microsoft account.</p>
       <button type="button" class="btn btn-ms" id="loginBtn">
         <svg class="ms-logo" viewBox="0 0 21 21" aria-hidden="true" focusable="false">
           <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
@@ -55,13 +31,6 @@
       </button>
     </div>
 
-    <div class="auth-panel" data-auth-panel="blocked">
-      <h1>Access restricted</h1>
-      <p class="auth-message auth-error" id="authBlockedMessage">This account isn't authorized to use this application.</p>
-      <p class="auth-message">Sign in with an approved account, or contact an administrator if you believe this is a mistake.</p>
-      <button type="button" class="btn" id="authSwitchAccountBtn">Use a different account</button>
-    </div>
-
     <div class="auth-panel" data-auth-panel="error">
       <h1>Sign-in failed</h1>
       <p class="auth-message auth-error" id="authErrorMessage">Please try again.</p>
@@ -69,7 +38,67 @@
     </div>
   </div>
 
-  <div id="introOverlay">
+  <div id="authBlockedModal" class="auth-modal-overlay" hidden role="alertdialog" aria-labelledby="authBlockedTitle">
+    <div class="auth-modal">
+      <svg class="auth-modal-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3 L21.5 20 H2.5 Z" fill="none" stroke="#b02a2a" stroke-width="1.5" stroke-linejoin="round"/>
+        <line x1="12" y1="9.5" x2="12" y2="14.5" stroke="#b02a2a" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="12" cy="17.3" r="0.9" fill="#b02a2a"/>
+      </svg>
+      <h2 id="authBlockedTitle">Sign-in blocked</h2>
+      <p class="auth-message auth-error" id="authBlockedMessage">This account isn't authorized to use this application.</p>
+      <p class="auth-message">Contact an administrator if you believe this is a mistake.</p>
+      <button type="button" class="btn" id="authBlockedRetryBtn">Retry</button>
+    </div>
+  </div>
+
+  <div id="authLogoutConfirmModal" class="auth-modal-overlay" hidden role="alertdialog" aria-labelledby="authLogoutConfirmTitle">
+    <div class="auth-modal auth-modal--logout">
+      <svg class="auth-modal-icon auth-modal-icon--logout" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M16 16l4-4-4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="20" y1="12" x2="9" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <h2 id="authLogoutConfirmTitle">Sign out?</h2>
+      <div class="auth-modal-user" id="authLogoutUserInfo" hidden>
+        <span class="auth-modal-user-avatar" id="authLogoutUserAvatar" aria-hidden="true"></span>
+        <span class="auth-modal-user-text">
+          <span class="auth-modal-user-name" id="authLogoutUserName"></span>
+          <span class="auth-modal-user-email" id="authLogoutUserEmail"></span>
+        </span>
+      </div>
+      <p class="auth-message">You'll be signed out and returned to the login page.</p>
+      <div class="auth-modal-actions">
+        <button type="button" class="btn btn-secondary" id="authLogoutCancelBtn">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Stay signed in</span>
+        </button>
+        <button type="button" class="btn btn-danger" id="authLogoutConfirmBtn">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 16l4-4-4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="20" y1="12" x2="9" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span>Sign out</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="authBackNavConfirmModal" class="auth-modal-overlay" hidden role="alertdialog" aria-labelledby="authBackNavConfirmTitle">
+    <div class="auth-modal">
+      <h2 id="authBackNavConfirmTitle">Go back to login?</h2>
+      <p class="auth-message">Going back will sign you out and return you to the login page.</p>
+      <div class="auth-modal-actions">
+        <button type="button" class="btn btn-secondary" id="authBackNavCancelBtn">Stay signed in</button>
+        <button type="button" class="btn" id="authBackNavConfirmBtn">Yes, sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="introOverlay" inert>
     <div class="intro-stage">
       <div class="intro-floor"></div>
       <div class="elevator-frame" id="elevator">
@@ -116,16 +145,12 @@
     </div>
   </div>
 
-  <nav class="topnav">
-    <span class="brand">Document Generator</span>
+  <nav class="topnav" inert>
+    <span class="brand"><img class="brand-logo" src="/assets/logo.jpg" alt="SbS Beyond IT"><span class="brand-text">Document Generator</span></span>
     <div class="nav-links">
       <a href="#" class="nav-link active" id="navGeneratorLink">Generator</a>
       <a href="#" class="nav-link" id="navHistoryLink">History</a>
     </div>
-    <!-- Populated from the account's own name/ID-token claims only after
-         sign-in succeeds (see auth-ui.js) — no Graph or other API call.
-         Text content is set via textContent, never innerHTML, so a display
-         name or claim value containing markup can't inject HTML. -->
     <div class="auth-user" id="authUser" hidden>
       <span class="auth-avatar" id="authAvatar" aria-hidden="true"></span>
       <span class="auth-user-text">
@@ -142,7 +167,7 @@
     </div>
   </nav>
 
-  <section class="history-view" id="historyView" hidden>
+  <section class="history-view" id="historyView" hidden inert>
     <div class="history-header">
       <p class="eyebrow">Saved locally</p>
       <h1>History</h1>
@@ -151,13 +176,17 @@
     <div class="history-list" id="historyList"></div>
   </section>
 
-  <main class="stage" id="mainStage">
+  <main class="stage" id="mainStage" inert>
     <section class="hero">
       <p class="eyebrow">MSA Automation</p>
       <h1>Document<br>Generator</h1>
       <p class="subtitle">Upload a W-9 and generate a Master Service Agreement in one click.</p>
       <p class="status" id="status" role="status"></p>
 
+      <div class="w9-review-alert" id="w9EditHint" role="alert" hidden>
+        <span class="w9-review-alert-icon" aria-hidden="true">⚠</span>
+        <span>Please check these details carefully — automated extraction isn't perfect. If anything is wrong, correct it manually in the fields below before continuing.</span>
+      </div>
       <dl class="w9-summary" id="w9Summary" hidden>
         <div>
           <dt>Company / Business Name</dt>
@@ -166,7 +195,7 @@
         <div>
           <dt>Tax ID</dt>
           <dd class="w9-taxid-fields">
-            <input type="text" id="w9TaxId" placeholder="—">
+            <input type="text" id="w9TaxId" placeholder="—" inputmode="numeric">
             <select id="w9TaxIdType">
               <option value="SSN">SSN</option>
               <option value="EIN">EIN</option>
@@ -178,12 +207,13 @@
           <dd><input type="text" id="w9Address" placeholder="—"></dd>
         </div>
       </dl>
-      <p class="hint w9-edit-hint" id="w9EditHint" hidden>You can correct any of these before continuing.</p>
 
       <details class="w9-debug" id="w9Debug" hidden>
         <summary>Raw extracted text (debug)</summary>
         <pre id="w9RawText"></pre>
       </details>
+
+      <button type="button" class="btn btn-nav btn-new-doc" id="startNewBtn" hidden>Generate New Document</button>
     </section>
 
     <section class="action-panel">
@@ -226,43 +256,23 @@
           <div class="upload-block">
             <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
             <label for="fileInput" class="btn">Upload W-9</label>
-            <p class="hint">Upload a W-9 PDF</p>
+            <p class="hint">Upload a W-9 PDF or a photo/scan (JPG, PNG)</p>
             <ul class="file-list" id="fileList"></ul>
           </div>
           <button type="button" class="btn btn-nav step1-extract-btn" id="extractDataBtn" disabled>Extract Data</button>
           <div class="wizard-nav">
-            <button type="button" class="btn btn-nav" id="step1NextBtn" disabled>Next</button>
+            <button type="button" class="btn btn-nav" id="step1NextBtn" disabled>
+              <span class="btn-label">Next</span>
+              <span class="btn-spinner" aria-hidden="true"></span>
+            </button>
           </div>
         </div>
 
         <div class="wizard-step" data-step="2">
           <span class="step-label">Step 2</span>
-          <h2>Upload MSA template</h2>
-          <div class="upload-block">
-            <input
-              type="file"
-              id="msaTemplateInput"
-              accept="application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              hidden
-            >
-            <label for="msaTemplateInput" class="btn">Upload MSA</label>
-            <p class="hint">Upload the MSA template (PDF or Word) to fill with the extracted data</p>
-            <ul class="file-list" id="msaFileList"></ul>
-          </div>
-          <button type="button" class="btn step1-extract-btn" id="generateBtn" disabled>
-            <span class="btn-label">Insert Data</span>
-            <span class="btn-spinner" aria-hidden="true"></span>
-          </button>
-          <div class="wizard-nav">
-            <button type="button" class="btn btn-secondary" id="step2BackBtn">Back</button>
-            <button type="button" class="btn btn-nav" id="step2NextBtn" disabled>Next</button>
-          </div>
-        </div>
-
-        <div class="wizard-step" data-step="3">
-          <span class="step-label">Step 3</span>
           <h2>Manual details</h2>
           <p class="hint">These aren't on the W-9, so enter them by hand.</p>
+          <p class="status wizard-status" id="manualFieldsStatus" role="status"></p>
           <div class="manual-fields">
             <label>Contractor Representative(s)<input type="text" id="manualRep" placeholder="e.g. Jane Doe"></label>
             <label>Role<input type="text" id="manualRole" placeholder="e.g. GIS Architect"></label>
@@ -284,30 +294,98 @@
           </div>
           <button type="button" class="btn step1-extract-btn" id="applyManualBtn">Apply Details</button>
           <div class="wizard-nav">
-            <button type="button" class="btn btn-secondary" id="step3BackBtn">Back</button>
-            <button type="button" class="btn btn-nav" id="step3NextBtn" disabled>Next</button>
+            <button type="button" class="btn btn-secondary" id="step2BackBtn">Back</button>
           </div>
         </div>
 
-        <div class="wizard-step" data-step="4">
-          <span class="step-label">Step 4</span>
-          <h2>Download</h2>
-          <div class="download-options">
-            <button type="button" class="btn btn-download" id="downloadPdfBtn" disabled>Download as PDF</button>
-            <button type="button" class="btn btn-download" id="downloadWordBtn" disabled>Download as Word (.docx)</button>
+        <div class="wizard-step" data-step="3">
+          <span class="step-label">Step 3</span>
+          <div class="step3-body">
+            <h2>Download</h2>
+            <div class="download-options">
+              <button type="button" class="btn btn-download" id="downloadPdfBtn" disabled>Download as PDF</button>
+              <button type="button" class="btn btn-download" id="downloadWordBtn" disabled>Download as Word (.docx)</button>
+            </div>
           </div>
           <div class="wizard-nav">
-            <button type="button" class="btn btn-secondary" id="step4BackBtn">Back</button>
+            <button type="button" class="btn btn-secondary" id="step3BackBtn">Back</button>
           </div>
         </div>
       </div>
     </section>
-  </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js" integrity="sha512-kMjICPeuRYAQ5KvL0+s/ln7a+96IKohiAtfaXKg37aSLmzfP0nFweeaE7lDRN01XIjn0jUfYT5kSFM4XmcTThQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js" integrity="sha512-z8IYLHO8bTgFqj+yrPyIJnzBDf7DDhWwiEsk4sY+Oe6J2M+WQequeGS7qioI5vT6rXgVRb4K1UVQC5ER7MKzKQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script type="module" src="auth-ui.js?v=1"></script>
-<script type="module" src="script.js?v=20260813-16"></script>
+    <button type="button" class="preview-toggle" id="previewToggleBtn" aria-expanded="false" aria-controls="previewPanel">
+      <span class="preview-toggle-icon" id="previewToggleIcon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+          <path d="M14 3v5h5"/>
+          <path d="M9 13h6M9 16.5h6M9 9.5h2"/>
+        </svg>
+        <svg class="preview-toggle-icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+      </span>
+      <span class="preview-toggle-label" id="previewToggleLabel">Preview</span>
+    </button>
+
+    <aside class="preview-panel" id="previewPanel" aria-hidden="true">
+      <div class="preview-panel-header">
+        <div class="preview-panel-title">
+          <svg class="preview-panel-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+            <path d="M14 3v5h5"/>
+          </svg>
+          <h3>Document Preview</h3>
+        </div>
+        <div class="preview-zoom-controls" id="previewZoomControls" hidden>
+          <button type="button" class="preview-zoom-btn" id="previewZoomOutBtn" aria-label="Zoom out">&#8722;</button>
+          <span class="preview-zoom-level" id="previewZoomLevel">100%</span>
+          <button type="button" class="preview-zoom-btn" id="previewZoomInBtn" aria-label="Zoom in">&#43;</button>
+        </div>
+        <button type="button" class="preview-panel-close" id="previewCloseBtn" aria-label="Close preview">&#10005;</button>
+      </div>
+      <div class="preview-tabs" id="previewTabs" role="tablist">
+        <button type="button" class="preview-tab is-active" id="previewTabGenerated" role="tab" aria-selected="true" data-preview-tab="generated">Generated MSA</button>
+        <button type="button" class="preview-tab" id="previewTabW9" role="tab" aria-selected="false" data-preview-tab="w9">Uploaded W-9</button>
+      </div>
+      <p class="status preview-status" id="previewStatus" role="status"></p>
+      <div class="preview-paper">
+        <div class="preview-view is-active" id="previewViewGenerated">
+          <div class="preview-empty-state" id="previewEmptyState">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+              <path d="M14 3v5h5"/>
+              <path d="M9 13h6M9 16.5h4"/>
+            </svg>
+            <p>Insert data into the MSA template to see a live document preview here.</p>
+          </div>
+          <div class="preview-loading" id="previewLoading" hidden>
+            <span class="preview-loading-spinner" aria-hidden="true"></span>
+            <span>Updating preview&hellip;</span>
+          </div>
+          <iframe class="preview-frame" id="previewFrame" title="MSA document preview" hidden></iframe>
+        </div>
+        <div class="preview-view" id="previewViewW9" hidden>
+          <div class="preview-empty-state" id="w9PreviewEmptyState">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>
+              <path d="M14 3v5h5"/>
+              <path d="M9 13h6M9 16.5h4"/>
+            </svg>
+            <p>Upload a W-9 file to see it here.</p>
+          </div>
+          <div class="preview-loading" id="w9PreviewLoading" hidden>
+            <span class="preview-loading-spinner" aria-hidden="true"></span>
+            <span>Loading preview&hellip;</span>
+          </div>
+          <div class="w9-preview-pages" id="w9PreviewPages" hidden>
+            <img class="preview-w9-image" id="w9PreviewImage" alt="Uploaded W-9 preview" hidden>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+<script type="module" src="auth-ui.js?v=3"></script>
+<script type="module" src="script.js?v=20260907-1"></script>
 </body>
 </html>
