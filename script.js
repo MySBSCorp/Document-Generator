@@ -3580,7 +3580,7 @@ function buildAutoReplacements(data) {
 }
 
 async function insertDataAndAdvance() {
-  if (step1NextBtn.classList.contains('is-loading')) return false;
+  if (step1NextBtn.disabled || step1NextBtn.classList.contains('is-loading')) return false;
 
   const startedAt = Date.now();
   step1NextBtn.classList.add('is-loading');
