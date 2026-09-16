@@ -76,27 +76,50 @@ manualStartDatePicker.addEventListener('change', () => {
   if (!manualStartDatePicker.value) return;
   const [year, month, day] = manualStartDatePicker.value.split('-').map(Number);
   const picked = new Date(year, month - 1, day);
-  manualStartDate.value = picked.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+  manualStartDate.value = formatDateValue(picked);
   manualStartDate.dispatchEvent(new Event('input', { bubbles: true }));
 });
 
-function syncStartDatePickerFromText() {
-  const text = manualStartDate.value.trim().replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
-  const parsed = text ? new Date(text) : NaN;
-  if (text && !Number.isNaN(parsed.getTime())) {
-    const year = parsed.getFullYear();
-    const month = String(parsed.getMonth() + 1).padStart(2, '0');
-    const day = String(parsed.getDate()).padStart(2, '0');
-    manualStartDatePicker.value = `${year}-${month}-${day}`;
-  } else {
-    manualStartDatePicker.value = '';
-  }
+function parseManualStartDate(value) {
+  const match = value.trim().match(/^([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{4})$/i);
+  if (!match) return null;
+  const parsed = new Date(`${match[1]} ${match[2]}, ${match[3]}`);
+  if (Number.isNaN(parsed.getTime()) || parsed.getFullYear() !== Number(match[3])) return null;
+  return parsed;
 }
-manualStartDate.addEventListener('input', syncStartDatePickerFromText);
+
+function formatDateValue(date) {
+  const day = date.getDate();
+  const suffix = day % 10 === 1 && day !== 11
+    ? 'st'
+    : day % 10 === 2 && day !== 12
+      ? 'nd'
+      : day % 10 === 3 && day !== 13
+        ? 'rd'
+        : 'th';
+  return `${date.toLocaleDateString('en-US', { month: 'long' })} ${day}${suffix}, ${date.getFullYear()}`;
+}
+
+manualStartDate.addEventListener('input', () => {
+  const original = manualStartDate.value;
+  const sanitized = original.replace(/[^A-Za-z0-9, ]/g, '');
+  if (sanitized !== original) manualStartDate.value = sanitized;
+});
+
+manualStartDate.addEventListener('blur', () => {
+  const parsed = parseManualStartDate(manualStartDate.value);
+  if (!manualStartDate.value.trim()) return;
+  if (!parsed) {
+    manualStartDate.classList.add('field-error');
+    return;
+  }
+  manualStartDate.value = formatDateValue(parsed);
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  manualStartDatePicker.value = `${year}-${month}-${day}`;
+  manualStartDate.classList.remove('field-error');
+});
 
 const wizard = document.getElementById('wizard');
 const actionPanel = document.querySelector('.action-panel');
@@ -2859,6 +2882,119 @@ function fixTemplateTabStops(root) {
   });
 }
 
+// Both signature blocks lay the four Sign:/Name:/Title:/Date: rows' second
+// column on one tab stop the template declares itself — 5490 twips (274.5pt)
+// from the paragraph's own text edge. What reaches the page drifts off that
+// stop, though, and by a different amount on each row: docx-preview renders a
+// Word tab as an em space widened with word-spacing, the Sign: row has no tab
+// at all in the source document and crosses to its column on a run of literal
+// spaces, and html2canvas re-measures all of that with its own text metrics
+// when the PDF is rasterized rather than reading the browser's layout. Every
+// one of those widths depends on font metrics that differ between devices,
+// which is why the right-hand column's four labels can start in four different
+// places — a few points apart on one machine, plainly broken on another.
+//
+// Replacing each row's gap with a box of an exact measured width takes the
+// question away from all of them: a fixed-width inline-block is laid out the
+// same by the browser and by html2canvas, so the column lands on the stop the
+// template declares no matter whose font metrics are doing the measuring. Only
+// these four rows are touched, and only the horizontal position of their
+// second column — the company-name row above them sits on a stop of its own
+// (4860 twips) and is left exactly where it renders today.
+const SIGNATURE_FIELD_STOP_PT = 274.5; // 5490 twips
+
+function alignSignatureColumns(root) {
+  // The gap a row crosses to reach its second column: the tab docx-preview
+  // rendered for it, or — on the Sign: row, which has no tab in the source —
+  // the last run of plain spaces before the label. Anything else is left
+  // alone, so markup this template doesn't actually use is never shifted.
+  const gapElementBefore = (p, columnIndex) => {
+    const tab = p.querySelector('.docx-tab-stop');
+    if (tab) return tab;
+    let charsSoFar = 0;
+    let gap = null;
+    for (const el of Array.from(p.children)) {
+      if (charsSoFar >= columnIndex) break;
+      if (/^\s+$/.test(el.textContent)) gap = el;
+      charsSoFar += el.textContent.length;
+    }
+    return gap;
+  };
+
+  root.querySelectorAll('section.docx').forEach((pageEl) => {
+    const pxPerPt = pageEl.getBoundingClientRect().width / LETTER_WIDTH_PT;
+    Array.from(pageEl.querySelectorAll('p')).forEach((p) => {
+      const text = p.textContent.trim();
+      const fieldLabel = text.match(/^(Sign:|Name:|Title:|Date:)/);
+      if (!fieldLabel) return;
+
+      // The second column starts where the row repeats its own label.
+      const full = p.textContent;
+      const columnIndex = full.indexOf(fieldLabel[0], full.indexOf(fieldLabel[0]) + 1);
+      if (columnIndex <= 0) return;
+
+      const gapEl = gapElementBefore(p, columnIndex);
+      if (!gapEl || !/^\s+$/.test(gapEl.textContent)) return;
+
+      // One row (Date:) carries a literal space between its tab and its label
+      // in the source document. Left in place that space adds its own
+      // font-dependent width on top of the box below, landing that one label a
+      // few points right of the other three — so it is folded into the box,
+      // which then carries the whole distance itself. The walk runs backwards
+      // across text nodes because bakeInLineBreaks has by then wrapped each
+      // word in a span of its own, leaving that space in a node of its own too.
+      const doc = p.ownerDocument;
+      const walker = doc.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+      let nodeIdx = -1;
+      let offset = 0;
+      let pos = 0;
+      for (let i = 0; i < nodes.length; i++) {
+        const len = nodes[i].nodeValue.length;
+        if (columnIndex < pos + len) {
+          nodeIdx = i;
+          offset = columnIndex - pos;
+          break;
+        }
+        pos += len;
+      }
+      while (nodeIdx >= 0 && !gapEl.contains(nodes[nodeIdx])) {
+        const node = nodes[nodeIdx];
+        let start = offset;
+        while (start > 0 && /\s/.test(node.nodeValue[start - 1])) start--;
+        if (start < offset) node.nodeValue = node.nodeValue.slice(0, start) + node.nodeValue.slice(offset);
+        if (start > 0) break;
+        nodeIdx--;
+        if (nodeIdx < 0) break;
+        offset = nodes[nodeIdx].nodeValue.length;
+      }
+
+      const style = getComputedStyle(p);
+      const textLeft = p.getBoundingClientRect().left + (parseFloat(style.paddingLeft) || 0);
+      // Measured off the gap's own box, which is a real element rect and needs
+      // no DOM poking to read.
+      const widthPx = textLeft + SIGNATURE_FIELD_STOP_PT * pxPerPt - gapEl.getBoundingClientRect().left;
+      if (!(widthPx > 0)) return;
+
+      // font-size:0 so whatever whitespace the gap holds adds nothing of its
+      // own to the box, and word-spacing cleared so the sizing fixTabStopWidth
+      // gave a tab doesn't stack on top of the width set here. The box is held
+      // to zero height on a zero line-height as well: an inline-block's own
+      // height otherwise joins the line box and pushes these rows further
+      // apart than the rest of the document's lines.
+      gapEl.style.display = 'inline-block';
+      gapEl.style.fontSize = '0';
+      gapEl.style.lineHeight = '0';
+      gapEl.style.height = '0';
+      gapEl.style.overflow = 'hidden';
+      gapEl.style.verticalAlign = 'baseline';
+      gapEl.style.wordSpacing = 'normal';
+      gapEl.style.width = `${widthPx.toFixed(2)}px`;
+    });
+  });
+}
+
 // Several clauses in this template (the insurance list in "No Power to Act..." /
 // Section 3, for one) are authored as several short Word paragraphs in a row
 // instead of one paragraph that wraps naturally. Those paragraphs use Word's
@@ -3685,6 +3821,10 @@ async function renderDocxToPdf(docxBytes) {
     backfillUnderfilledPages(container);
     enforceExpectedPageCount(container);
     bakeInLineBreaks(container);
+    // After bakeInLineBreaks, not before: that pass re-wraps every word into
+    // its own span and re-reads the line breaks, which moves these rows'
+    // columns again — correcting them before it would simply be undone.
+    alignSignatureColumns(container);
 
     const pageEls = Array.from(container.querySelectorAll('section.docx'));
     const pdfDoc = await PDFLib.PDFDocument.create();
@@ -3822,7 +3962,7 @@ function scheduleLivePreviewUpdate() {
         { type: 'afterLabel', label: MANUAL_FIELD_LABELS.rep, value: manualRep.value.trim() },
         { type: 'afterLabel', label: MANUAL_FIELD_LABELS.role, value: manualRole.value.trim() },
         { type: 'afterLabel', label: MANUAL_FIELD_LABELS.location, value: manualLocation.value.trim() },
-        { type: 'afterLabel', label: MANUAL_FIELD_LABELS.startDate, value: manualStartDate.value.trim() },
+        { type: 'afterLabel', label: MANUAL_FIELD_LABELS.startDate, value: formatManualStartDate() },
         {
           type: 'afterLabel',
           label: MANUAL_FIELD_LABELS.billingRate,
@@ -3839,10 +3979,15 @@ function scheduleLivePreviewUpdate() {
 
 const MANUAL_FIELD_INPUTS = [manualRep, manualRole, manualLocation, manualStartDate, manualBillingRate];
 
+function formatManualStartDate() {
+  const parsed = parseManualStartDate(manualStartDate.value);
+  return parsed ? formatDateValue(parsed) : '';
+}
+
 function validateManualFields() {
   let valid = true;
   MANUAL_FIELD_INPUTS.forEach((el) => {
-    const ok = !!el.value.trim();
+    const ok = !!el.value.trim() && (el !== manualStartDate || !!parseManualStartDate(el.value));
     el.classList.toggle('field-error', !ok);
     if (!ok) valid = false;
   });
@@ -3858,12 +4003,6 @@ function setManualFieldsStatus(message, isError = false) {
   manualFieldsStatus.classList.add('flash');
 }
 
-// Representative, Role, and Location are free-typed text, so this is where a
-// stray special character would actually come from a keystroke — Start Date
-// is populated from the date picker in a fixed "Month D, YYYY" format (via
-// syncStartDatePickerFromText, which needs its comma) and Billing Rate is
-// already a type="number" input the browser itself restricts, so neither
-// belongs in this filter.
 const NO_SPECIAL_CHARS_FIELDS = [manualRep, manualRole, manualLocation];
 const SPECIAL_CHARS_PATTERN = /[^a-zA-Z0-9 ]/g;
 NO_SPECIAL_CHARS_FIELDS.forEach((el) => {
@@ -3880,6 +4019,17 @@ NO_SPECIAL_CHARS_FIELDS.forEach((el) => {
     el.value = sanitized;
     el.setSelectionRange(newCaret, newCaret);
   });
+});
+
+manualBillingRate.addEventListener('input', () => {
+  const sanitized = manualBillingRate.value.replace(/[^0-9.]/g, '');
+  const [whole, ...fractionParts] = sanitized.split('.');
+  const normalized = fractionParts.length ? `${whole}.${fractionParts.join('')}` : whole;
+  if (manualBillingRate.value !== normalized) manualBillingRate.value = normalized;
+});
+
+manualBillingRate.addEventListener('keydown', (event) => {
+  if (['e', 'E', '+', '-'].includes(event.key)) event.preventDefault();
 });
 
 MANUAL_FIELD_INPUTS.forEach((el) => {
@@ -3918,7 +4068,7 @@ applyManualBtn.addEventListener('click', async () => {
       rep: manualRep.value.trim(),
       role: manualRole.value.trim(),
       location: manualLocation.value.trim(),
-      startDate: manualStartDate.value.trim(),
+      startDate: formatManualStartDate(),
       billingRate: manualBillingRate.value.trim() ? `$${manualBillingRate.value.trim()}/hr` : '',
     };
 
@@ -4255,6 +4405,9 @@ async function setDocumentPreview(docxBytes) {
     // comment for why the holes it fills only exist by this point.
     backfillUnderfilledPages(doc.body);
     enforceExpectedPageCount(doc.body);
+    // Last, on the final layout — the same point the export corrects at, so
+    // the preview and the exported PDF put these columns in the same place.
+    alignSignatureColumns(doc.body);
     normalizePreviewFooter(doc.body);
 
     applyPreviewZoomStyleOverrides(doc);

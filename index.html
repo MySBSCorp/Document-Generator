@@ -279,7 +279,7 @@
             <label>Location<input type="text" id="manualLocation" placeholder="e.g. Remote"></label>
             <label>Start Date
               <span class="date-field">
-                <input type="text" id="manualStartDate" placeholder="e.g. August 5th, 2026">
+                <input type="text" id="manualStartDate" placeholder="e.g. August 5th, 2026" autocomplete="off">
                 <button type="button" class="date-field-trigger" id="manualStartDatePickerBtn" aria-label="Choose a date">📅</button>
                 <input type="date" id="manualStartDatePicker" class="date-field-native" tabindex="-1" aria-hidden="true">
               </span>
@@ -345,8 +345,8 @@
         <button type="button" class="preview-panel-close" id="previewCloseBtn" aria-label="Close preview">&#10005;</button>
       </div>
       <div class="preview-tabs" id="previewTabs" role="tablist">
-        <button type="button" class="preview-tab is-active" id="previewTabGenerated" role="tab" aria-selected="true" data-preview-tab="generated">Generated MSA</button>
         <button type="button" class="preview-tab" id="previewTabW9" role="tab" aria-selected="false" data-preview-tab="w9">Uploaded W-9</button>
+        <button type="button" class="preview-tab is-active" id="previewTabGenerated" role="tab" aria-selected="true" data-preview-tab="generated">Generated MSA</button>
       </div>
       <p class="status preview-status" id="previewStatus" role="status"></p>
       <div class="preview-paper">
