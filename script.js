@@ -3032,6 +3032,14 @@ function removeEmptyNumberingStubs(root) {
 // sheet per page, matching Word's own pagination instead of docx-preview's
 // fewer, taller pages. Shared by both, so they can never disagree with each
 // other on where a page actually breaks.
+// How many blank paragraphs in a row count as this template's own deliberate
+// page-break padding rather than the ordinary one-line gap between paragraphs
+// (which never reaches this many in a row anywhere in the document). Shared by
+// the two passes that read that pattern in opposite directions —
+// moveContentAfterTrailingBlankRun, which honors it as a break, and
+// backfillUnderfilledPages, which refuses to pull content back across one.
+const MIN_BLANK_PADDING_RUN = 3;
+
 function repaginateToLetterPages(root) {
   const pageEls = Array.from(root.querySelectorAll('section.docx'));
   if (!pageEls.length) return;
@@ -3131,7 +3139,6 @@ function repaginateToLetterPages(root) {
   // a page — keeps this to rescuing genuinely orphaned fragments like the two
   // above, without reshaping pages that were never actually broken. Returns
   // whether anything moved.
-  const MIN_BLANK_RUN = 3;
   const MAX_ORPHAN_HEIGHT_PX = PAGE_HEIGHT_PX / 3;
   function moveContentAfterTrailingBlankRun() {
     let movedAny = false;
@@ -3156,7 +3163,7 @@ function repaginateToLetterPages(root) {
           // place, so it's excluded from counting as a split point (the run
           // simply keeps being ignored, not reset past it) while scanning
           // continues forward for the genuine split that follows it.
-          if (runLen >= MIN_BLANK_RUN && kids[c].textContent.trim() !== 'Initial') {
+          if (runLen >= MIN_BLANK_PADDING_RUN && kids[c].textContent.trim() !== 'Initial') {
             splitAt = c;
           }
           runLen = 0;
@@ -3331,6 +3338,184 @@ function addInitialToPages(root, pageNumbers) {
   });
 }
 
+// Every pass above that *removes* content from an already-paginated page —
+// moveMainSignatureBlockToWitnessPage lifting the closing signature block
+// onto its "IN WITNESS WHEREOF" page, removeInitialFromClosingPages
+// stripping a sign-off group off the closing pages — frees vertical room on
+// the page it emptied, but nothing pulls the content that repaginateToLetterPages
+// had already pushed onto the following page back up into it. In the Exhibit A
+// case that leaves the two closing pages each a little over 40% full (the SOW's
+// fields split at "Travel and Expenses" across a mostly-blank page and the one
+// after it) when their combined content fits on one page, exactly as Word
+// paginates it — and, because the leftover page's content sits just above the
+// "under a third of a page" bar mergeSparseLastPageBack uses, whether it gets
+// merged away at all comes down to the device's own font metrics, so the same
+// document shows a different page count on different machines.
+//
+// This runs last, once every other pass has finished adding and removing
+// content, and moves whole top-level blocks from each page's successor back up
+// while they still fit inside a true page — the mirror image of
+// splitOversizedPages, and never splitting a block, so no page it touches can
+// end up over height. Three boundaries are deliberately left alone, since each
+// marks a break that is meant to be there rather than a hole left by a removal:
+//
+//   - a page whose own content ends with this template's recurring
+//     "Initial ___ / SBS Contractor" sign-off — anything pulled up would land
+//     *below* that page's sign-off line;
+//   - the "Exhibit A" heading, which starts the Statement of Work and so always
+//     begins its own page (in the source document it's a run of blank padding
+//     after the main signature block that puts it there, and that padding no
+//     longer trails the page once the signature block moves onto it);
+//   - a page ending in a run of blank paragraphs long enough to be that same
+//     deliberate padding (MIN_BLANK_PADDING_RUN, the same pattern
+//     moveContentAfterTrailingBlankRun keys on), which is the source document's
+//     own way of forcing a page break.
+
+function backfillUnderfilledPages(root) {
+  const pageEls = Array.from(root.querySelectorAll('section.docx'));
+  if (pageEls.length < 2) return;
+  // Same measured px-per-pt as repaginateToLetterPages (and the same reason for
+  // measuring it rather than assuming 96dpi), so the two passes agree on
+  // exactly how tall a true US-Letter page is.
+  const pxPerPt = pageEls[0].getBoundingClientRect().width / LETTER_WIDTH_PT;
+  const PAGE_HEIGHT_PX = LETTER_HEIGHT_PT * pxPerPt;
+  const PAGE_HEIGHT_TOLERANCE_PX = 3 * pxPerPt;
+
+  // The sign-off group's own last line ("SBS <tab> Contractor" — the tab reads
+  // back as whitespace in textContent).
+  const isSignOffLabel = (el) => /^SBS\s+Contractor$/.test(el.textContent.trim());
+  const startsOwnPage = (el) => {
+    const text = el.textContent.trim();
+    return text.startsWith('Exhibit A') || text === 'Initial';
+  };
+  const endsWithBlankRun = (kids) => {
+    let run = 0;
+    for (let i = kids.length - 1; i >= 0 && !kids[i].textContent.trim(); i--) run++;
+    return run >= MIN_BLANK_PADDING_RUN;
+  };
+
+  for (let i = 0; i < pageEls.length - 1; i++) {
+    const pageEl = pageEls[i];
+    const article = pageEl.querySelector('article');
+    if (!article) continue;
+
+    // Emptying a page removes it, which brings the page after it up against
+    // this one — so keep going from the same page against its new successor,
+    // re-checking the guards each time, since what was just pulled up is now
+    // this page's own trailing content.
+    while (i < pageEls.length - 1) {
+      const kids = Array.from(article.children);
+      const realKids = kids.filter((k) => k.textContent.trim());
+      if (!realKids.length) break;
+      if (isSignOffLabel(realKids[realKids.length - 1])) break;
+      if (endsWithBlankRun(kids)) break;
+      const nextPageEl = pageEls[i + 1];
+      const nextArticle = nextPageEl.querySelector('article');
+      if (!nextArticle) break;
+      while (nextArticle.firstElementChild) {
+        const block = nextArticle.firstElementChild;
+        if (startsOwnPage(block)) break;
+        article.appendChild(block);
+        const pageTop = pageEl.getBoundingClientRect().top;
+        if (block.getBoundingClientRect().bottom - pageTop > PAGE_HEIGHT_PX + PAGE_HEIGHT_TOLERANCE_PX) {
+          nextArticle.prepend(block);
+          break;
+        }
+      }
+      // Anything left on the next page means this one is as full as it can
+      // get; only a page emptied outright is dropped, and this page then
+      // carries on against whatever page follows it.
+      if (nextArticle.firstElementChild) break;
+      nextPageEl.remove();
+      pageEls.splice(i + 1, 1);
+    }
+  }
+}
+
+// This template is a fixed ten-page document: every pass above exists to make
+// the rendered pagination match the ten pages Word itself produces, and with
+// the backfill in place that is what they produce for every set of substituted
+// values tried (short names through to a 60-character company name and a
+// wrapped role/location). This is the guard that makes that an invariant
+// rather than an observation — a last check that the page count is exactly
+// EXPECTED_PAGE_COUNT, correcting it if some future template edit or an
+// unusually long substitution ever pushes it off by one.
+//
+// Both corrections keep every page a true US-Letter page and never drop or
+// shrink content:
+//   - too many pages: the trailing page's blocks move back up onto the page
+//     before it, whole blocks at a time and only while they still fit inside a
+//     page, and the page is removed once it's empty. This is deliberately the
+//     end of the document, where this template leaves its slack (the closing
+//     pages run ~75% full) — an extra page in the middle would mean a section
+//     genuinely grew past its page, which can only be resolved by pushing the
+//     overflow down, so that case is reported and left correct-but-long rather
+//     than silently clipped.
+//   - too few pages: the trailing page splits at its own signature block (the
+//     natural seam, and where a merge would have joined them), so the extra
+//     page is a real page of content rather than a blank sheet.
+const EXPECTED_PAGE_COUNT = 10;
+
+function enforceExpectedPageCount(root) {
+  const pagesOf = () => Array.from(root.querySelectorAll('section.docx'));
+  const articleOf = (pageEl) => pageEl.querySelector('article');
+  let pageEls = pagesOf();
+  if (!pageEls.length) return;
+  const pxPerPt = pageEls[0].getBoundingClientRect().width / LETTER_WIDTH_PT;
+  const PAGE_HEIGHT_PX = LETTER_HEIGHT_PT * pxPerPt;
+  const PAGE_HEIGHT_TOLERANCE_PX = 3 * pxPerPt;
+
+  // Merge the last page back into the one before it, one whole block at a
+  // time, for as long as each still fits inside a true page.
+  while (pageEls.length > EXPECTED_PAGE_COUNT) {
+    const lastPage = pageEls[pageEls.length - 1];
+    const prevPage = pageEls[pageEls.length - 2];
+    const lastArticle = articleOf(lastPage);
+    const prevArticle = articleOf(prevPage);
+    if (!lastArticle || !prevArticle) break;
+    while (lastArticle.firstElementChild) {
+      const block = lastArticle.firstElementChild;
+      prevArticle.appendChild(block);
+      const pageTop = prevPage.getBoundingClientRect().top;
+      if (block.getBoundingClientRect().bottom - pageTop > PAGE_HEIGHT_PX + PAGE_HEIGHT_TOLERANCE_PX) {
+        lastArticle.prepend(block);
+        break;
+      }
+    }
+    if (lastArticle.firstElementChild) {
+      console.warn(
+        `MSA pagination: ${pageEls.length} pages rendered where ${EXPECTED_PAGE_COUNT} were expected, ` +
+          'and the extra content does not fit on the page before it — left as rendered so nothing is cut off.'
+      );
+      return;
+    }
+    lastPage.remove();
+    pageEls = pagesOf();
+  }
+
+  // Split the last page at its signature block, so a document that came out
+  // short gains a real page rather than a blank one.
+  while (pageEls.length < EXPECTED_PAGE_COUNT) {
+    const lastPage = pageEls[pageEls.length - 1];
+    const lastArticle = articleOf(lastPage);
+    if (!lastArticle) break;
+    const kids = Array.from(lastArticle.children);
+    let splitAt = kids.findIndex((k) => k.textContent.trim().startsWith('SBS CORP'));
+    if (splitAt <= 0) {
+      // No signature block to split at — fall back to the last real block, so
+      // the new page still carries content of its own.
+      splitAt = kids.reduce((found, k, idx) => (k.textContent.trim() ? idx : found), -1);
+    }
+    if (splitAt <= 0) break;
+    const newPage = lastPage.cloneNode(true);
+    const newArticle = articleOf(newPage);
+    while (newArticle.firstChild) newArticle.removeChild(newArticle.firstChild);
+    kids.slice(splitAt).forEach((k) => newArticle.appendChild(k));
+    lastPage.after(newPage);
+    pageEls = pagesOf();
+  }
+}
+
 // html2canvas re-lays-out text with its own metrics instead of reading the
 // browser's real layout, and every so often that measurement is just imprecise
 // enough to conclude a word barely doesn't fit a line when, with the browser's
@@ -3495,6 +3680,10 @@ async function renderDocxToPdf(docxBytes) {
     removeInitialFromClosingPages(container);
     mergeSparseLastPageBack(container);
     addInitialToPages(container, [2, 4]);
+    // Last, so it sees every other pass's additions and removals — see its own
+    // comment for why the holes it fills only exist by this point.
+    backfillUnderfilledPages(container);
+    enforceExpectedPageCount(container);
     bakeInLineBreaks(container);
 
     const pageEls = Array.from(container.querySelectorAll('section.docx'));
@@ -3580,7 +3769,7 @@ function buildAutoReplacements(data) {
 }
 
 async function insertDataAndAdvance() {
-  if (step1NextBtn.disabled || step1NextBtn.classList.contains('is-loading')) return false;
+  if (step1NextBtn.classList.contains('is-loading')) return false;
 
   const startedAt = Date.now();
   step1NextBtn.classList.add('is-loading');
@@ -4062,6 +4251,10 @@ async function setDocumentPreview(docxBytes) {
     removeInitialFromClosingPages(doc.body);
     mergeSparseLastPageBack(doc.body);
     addInitialToPages(doc.body, [2, 4]);
+    // Last, so it sees every other pass's additions and removals — see its own
+    // comment for why the holes it fills only exist by this point.
+    backfillUnderfilledPages(doc.body);
+    enforceExpectedPageCount(doc.body);
     normalizePreviewFooter(doc.body);
 
     applyPreviewZoomStyleOverrides(doc);
