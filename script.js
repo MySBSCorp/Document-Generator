@@ -4010,14 +4010,26 @@ function formatManualStartDate() {
   return parsed ? formatDateValue(parsed) : '';
 }
 
+function isManualFieldOk(el) {
+  return !!el.value.trim() && (el !== manualStartDate || !!parseManualStartDate(el.value));
+}
+
 function validateManualFields() {
   let valid = true;
   MANUAL_FIELD_INPUTS.forEach((el) => {
-    const ok = !!el.value.trim() && (el !== manualStartDate || !!parseManualStartDate(el.value));
+    const ok = isManualFieldOk(el);
     el.classList.toggle('field-error', !ok);
     if (!ok) valid = false;
   });
   return valid;
+}
+
+// Keeps Apply Details disabled until every manual field is actually filled in
+// (and, for Start Date, filled in with something that parses as a real
+// date) — mirrors isManualFieldOk without validateManualFields' side effect
+// of marking untouched fields red, so it's safe to call on every keystroke.
+function refreshApplyManualBtnState() {
+  applyManualBtn.disabled = !MANUAL_FIELD_INPUTS.every(isManualFieldOk);
 }
 
 function setManualFieldsStatus(message, isError = false) {
@@ -4064,6 +4076,7 @@ MANUAL_FIELD_INPUTS.forEach((el) => {
       el.classList.remove('field-error');
       if (MANUAL_FIELD_INPUTS.every((f) => f.value.trim())) setManualFieldsStatus('');
     }
+    refreshApplyManualBtnState();
     scheduleLivePreviewUpdate();
   });
 });
@@ -4175,6 +4188,7 @@ function resetWizardForNewDocument() {
     el.classList.remove('field-error');
   });
   manualStartDatePicker.value = '';
+  applyManualBtn.disabled = true;
 
   if (generatedPdfUrl) {
     URL.revokeObjectURL(generatedPdfUrl);
