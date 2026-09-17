@@ -2709,11 +2709,22 @@ async function applyDocxReplacements(source, replacements) {
 
   let replacedCount = 0;
   replacements.forEach((r) => {
-    if (!r.value) return;
     if (r.type === 'value') {
+      // The bundled template's own placeholder text (e.g. "APTIVA CORP") is
+      // only meaningful as a find target — with no value to replace it with,
+      // there's nothing to do but leave it, so this type alone still skips
+      // an empty value.
+      if (!r.value) return;
       replacedCount += replaceAllInRuns(allRuns, r.find, r.value);
     } else if (r.type === 'afterLabel') {
-      replacedCount += replaceAfterLabelInParagraphs(paragraphs, r.label, r.value);
+      // Unlike the "value" type above, the template's own text after each
+      // manual-details label (e.g. "Bala Bhaskara Rao Chennau" after
+      // "Contractor Representative(s):") is real example content the
+      // template ships with, not an inert placeholder — so an empty value
+      // here must still run, to actively blank that text out, rather than
+      // skip and leave the template's own example showing through as if it
+      // were the contractor's actual data.
+      replacedCount += replaceAfterLabelInParagraphs(paragraphs, r.label, r.value || '');
     }
   });
 
@@ -3920,7 +3931,7 @@ async function insertDataAndAdvance() {
   try {
     await loadMsaTemplates();
     const autoReplacements = buildAutoReplacements(extractedW9Data);
-    const { bytes: docxBytes, replacedCount } = await applyDocxReplacements(msaTemplateDocxFile, autoReplacements);
+    const { bytes: autoBytes, replacedCount } = await applyDocxReplacements(msaTemplateDocxFile, autoReplacements);
     success = replacedCount > 0;
     setPreviewStatus(
       success
@@ -3931,6 +3942,21 @@ async function insertDataAndAdvance() {
 
     if (success) {
       try {
+        // The bundled template ships with real-looking example text after
+        // each manual-details label (e.g. "Bala Bhaskara Rao Chennau"). None
+        // of that has been entered by the user yet at this point — Step 2
+        // hasn't been reached — so it must be blanked out here too, not only
+        // once the user types into (or leaves blank) a Step 2 field;
+        // otherwise the template's own example content would show through
+        // in the preview as if it were already-entered contractor data.
+        const blankManualReplacements = [
+          { type: 'afterLabel', label: MANUAL_FIELD_LABELS.rep, value: '' },
+          { type: 'afterLabel', label: MANUAL_FIELD_LABELS.role, value: '' },
+          { type: 'afterLabel', label: MANUAL_FIELD_LABELS.location, value: '' },
+          { type: 'afterLabel', label: MANUAL_FIELD_LABELS.startDate, value: '' },
+          { type: 'afterLabel', label: MANUAL_FIELD_LABELS.billingRate, value: '' },
+        ];
+        const { bytes: docxBytes } = await applyDocxReplacements(autoBytes, blankManualReplacements);
         await setDocumentPreview(docxBytes);
       } catch {
         // Preview is a convenience; the template scan already succeeded, so don't block progression.
