@@ -1,69 +1,136 @@
-// ---------------------------------------------------------------------------
-// DOM wiring for the auth gate (#authGate) and nav user badge (#authUser).
-// Owns UI state only — all MSAL/token logic lives in auth.js. Never reads
-// or displays an access/ID token itself: only account.name and the account's
-// email/UPN (via auth.js#getAccountEmail) are shown, and only via
-// textContent so a crafted name/claim value can't inject markup into the page.
-//
-// login()/logout() use MSAL's redirect flow (see auth.js), so a click on
-// #loginBtn/#logoutBtn navigates this whole page away — there is no
-// "then show the authenticated UI" step to run here for those. The account
-// (or an UnauthorizedEmailError) shows up in restoreSession() on the next
-// page load instead, once the browser lands back here.
-// ---------------------------------------------------------------------------
-import { restoreSession, login, logout, getAccountEmail, UnauthorizedEmailError } from "./auth.js";
+import { restoreSession, login, logout, getAccountEmail, AccessDeniedError } from "./auth.js";
 import { msalConfigured } from "./authConfig.js";
+
+const e2eAuthBypassed = import.meta.env.DEV && import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
 const authGate = document.getElementById("authGate");
 const loginBtn = document.getElementById("loginBtn");
 const authRetryBtn = document.getElementById("authRetryBtn");
 const authErrorMessage = document.getElementById("authErrorMessage");
-const authBlockedMessage = document.getElementById("authBlockedMessage");
-const authSwitchAccountBtn = document.getElementById("authSwitchAccountBtn");
 const authUser = document.getElementById("authUser");
 const authAvatar = document.getElementById("authAvatar");
 const authUserName = document.getElementById("authUserName");
 const authUserEmail = document.getElementById("authUserEmail");
 const logoutBtn = document.getElementById("logoutBtn");
 
+const authBlockedModal = document.getElementById("authBlockedModal");
+const authBlockedMessage = document.getElementById("authBlockedMessage");
+const authBlockedRetryBtn = document.getElementById("authBlockedRetryBtn");
+
+const authLogoutConfirmModal = document.getElementById("authLogoutConfirmModal");
+const authLogoutCancelBtn = document.getElementById("authLogoutCancelBtn");
+const authLogoutConfirmBtn = document.getElementById("authLogoutConfirmBtn");
+const authLogoutUserInfo = document.getElementById("authLogoutUserInfo");
+const authLogoutUserAvatar = document.getElementById("authLogoutUserAvatar");
+const authLogoutUserName = document.getElementById("authLogoutUserName");
+const authLogoutUserEmail = document.getElementById("authLogoutUserEmail");
+
+const authBackNavConfirmModal = document.getElementById("authBackNavConfirmModal");
+const authBackNavCancelBtn = document.getElementById("authBackNavCancelBtn");
+const authBackNavConfirmBtn = document.getElementById("authBackNavConfirmBtn");
+
+const introOverlay = document.getElementById("introOverlay");
+const topnav = document.querySelector(".topnav");
+const mainStage = document.getElementById("mainStage");
+const historyView = document.getElementById("historyView");
+const inertElements = [introOverlay, topnav, mainStage, historyView].filter(Boolean);
+
+function setAppInert(isInert) {
+  for (const el of inertElements) {
+    el.inert = isInert;
+  }
+}
+
 function setGateState(state, message) {
   authGate.dataset.state = state;
   if (state === "error") {
     authErrorMessage.textContent = message || "Please try again.";
   }
-  if (state === "blocked") {
-    authBlockedMessage.textContent = message || "This account isn't authorized to use this application.";
-  }
 }
 
-// First letter of up to the first two words (e.g. "Jane Doe" -> "JD"),
-// falling back to "?" for an empty/unusable name. textContent-only, so
-// this can't inject markup even from an adversarially-crafted name.
+function showBlockedModal(message) {
+  authBlockedMessage.textContent = message || "This account isn't authorized to use this application.";
+  authBlockedModal.hidden = false;
+}
+
+function hideBlockedModal() {
+  authBlockedModal.hidden = true;
+}
+
 function initialsFor(name) {
   const parts = (name || "").trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return "?";
   return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join("");
 }
 
+let isAuthenticated = false;
+let backGuardArmed = false;
+let currentAccount = null;
+
+function armBackGuard() {
+  if (backGuardArmed) return;
+  backGuardArmed = true;
+  history.pushState({ authGuard: true }, "");
+}
+
+function disarmBackGuard() {
+  backGuardArmed = false;
+}
+
+window.addEventListener("popstate", () => {
+  if (!isAuthenticated) return;
+  history.pushState({ authGuard: true }, "");
+  authBackNavConfirmModal.hidden = false;
+});
+
+authBackNavCancelBtn.addEventListener("click", () => {
+  authBackNavConfirmModal.hidden = true;
+});
+
+authBackNavConfirmBtn.addEventListener("click", async () => {
+  authBackNavConfirmBtn.disabled = true;
+  authBackNavCancelBtn.disabled = true;
+  try {
+    await logout();
+  } catch (error) {
+    console.error("[auth] logout failed:", error);
+    window.location.reload();
+  } finally {
+    authBackNavConfirmBtn.disabled = false;
+    authBackNavCancelBtn.disabled = false;
+    authBackNavConfirmModal.hidden = true;
+  }
+});
+
 function showAuthenticated(account) {
   authGate.classList.add("is-hidden");
+  setAppInert(false);
+  currentAccount = account;
   const displayName = account?.name || "Signed in";
   authUserName.textContent = displayName;
   authUserEmail.textContent = getAccountEmail(account) || "";
   authAvatar.textContent = initialsFor(displayName);
   authUser.hidden = false;
+  isAuthenticated = true;
+  armBackGuard();
 }
 
 function showUnauthenticated() {
   authUser.hidden = true;
+  setAppInert(true);
   authGate.classList.remove("is-hidden");
   setGateState("unauthenticated");
+  isAuthenticated = false;
+  currentAccount = null;
+  disarmBackGuard();
 }
 
 async function init() {
+  if (e2eAuthBypassed) {
+    showAuthenticated({ name: "E2E Test User", username: "e2e-test@local" });
+    return;
+  }
   if (!msalConfigured) {
-    // authConfig.js still has placeholder client/tenant ID values — don't
-    // let MSAL attempt (and fail) a real sign-in against those.
     setGateState(
       "error",
       "Authentication isn't configured yet. Set VITE_MSAL_CLIENT_ID and VITE_MSAL_TENANT_ID (see .env.example / AUTH.md)."
@@ -79,12 +146,9 @@ async function init() {
       showUnauthenticated();
     }
   } catch (error) {
-    if (error instanceof UnauthorizedEmailError) {
-      // A sign-in redirect just landed back here with an account outside
-      // the allowed domain. Distinct from a generic failure.
-      authUser.hidden = true;
-      authGate.classList.remove("is-hidden");
-      setGateState("blocked", `"${error.email}" isn't authorized to use this application.`);
+    if (error instanceof AccessDeniedError) {
+      showUnauthenticated();
+      showBlockedModal(error.message);
       return;
     }
     console.error("[auth] session restore failed:", error);
@@ -93,10 +157,6 @@ async function init() {
   }
 }
 
-// login() navigates the whole page to Entra and back (see auth.js) — on
-// success this function never returns to its caller, the browser just
-// leaves the page. Only a same-page failure (e.g. misconfiguration) is
-// left to handle here.
 async function attemptLogin(options) {
   try {
     await login(options);
@@ -112,13 +172,8 @@ loginBtn.addEventListener("click", async () => {
   loginBtn.disabled = false;
 });
 
-authSwitchAccountBtn.addEventListener("click", async () => {
-  authSwitchAccountBtn.disabled = true;
-  // Force Entra's account chooser instead of silently retrying whatever
-  // Microsoft session the browser still has (which would just get blocked
-  // again immediately for the same reason).
-  await attemptLogin({ prompt: "select_account" });
-  authSwitchAccountBtn.disabled = false;
+authBlockedRetryBtn.addEventListener("click", () => {
+  hideBlockedModal();
 });
 
 authRetryBtn.addEventListener("click", () => {
@@ -126,18 +181,36 @@ authRetryBtn.addEventListener("click", () => {
   init();
 });
 
-logoutBtn.addEventListener("click", async () => {
-  logoutBtn.disabled = true;
+logoutBtn.addEventListener("click", () => {
+  const displayName = currentAccount?.name || "Signed in";
+  const email = getAccountEmail(currentAccount) || "";
+  if (displayName || email) {
+    authLogoutUserName.textContent = displayName;
+    authLogoutUserEmail.textContent = email;
+    authLogoutUserAvatar.textContent = initialsFor(displayName);
+    authLogoutUserInfo.hidden = false;
+  } else {
+    authLogoutUserInfo.hidden = true;
+  }
+  authLogoutConfirmModal.hidden = false;
+});
+
+authLogoutCancelBtn.addEventListener("click", () => {
+  authLogoutConfirmModal.hidden = true;
+});
+
+authLogoutConfirmBtn.addEventListener("click", async () => {
+  authLogoutConfirmBtn.disabled = true;
+  authLogoutCancelBtn.disabled = true;
   try {
-    // Navigates away to Entra's logout endpoint and back on success (see
-    // auth.js) — that round trip is itself a full page reload, which also
-    // clears any in-memory app state (e.g. this app's extracted W-9 data)
-    // along with the auth session. The explicit reload below only runs if
-    // logout() fails without navigating anywhere.
     await logout();
   } catch (error) {
     console.error("[auth] logout failed:", error);
     window.location.reload();
+  } finally {
+    authLogoutConfirmBtn.disabled = false;
+    authLogoutCancelBtn.disabled = false;
+    authLogoutConfirmModal.hidden = true;
   }
 });
 

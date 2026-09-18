@@ -10,11 +10,11 @@ what's in this repo, and any tampering shows up as a `git diff`.
 
 | File | Source | Fetched | SHA-512 |
 |---|---|---|---|
-| `pizzip-3.2.0.esm.js` | `https://cdn.jsdelivr.net/npm/pizzip@3.2.0/+esm` | 2026-08-18 | `ad81f9fe9eae74b1b95d7b3d64d0dedae65bff3602e4b74d953f26e8f5433baec91d4f8ede0763f7f917b013c6d4825ab93436ba9a8aba9843f096083d51124f` |
-| `docx-8.5.0.esm.js` | `https://cdn.jsdelivr.net/npm/docx@8.5.0/+esm` | 2026-08-18 | `d0f5982a3578b6b95e32ba2be743d315be907ae1dbb9406b22f3b518d42ab6e14a7afd2ee3ff2b30ce6af8284c6ac6ef3cc058a0015c96e0f67253b7f9fcf995` |
-| `pako-2.1.0.esm.js` | `https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.es5.min.js/+esm` | 2026-08-18 | `b57a2e43d7da112a662770fca5a4747e5edfb7db8eb599210ac0e94aa8b866f4af8185ce49a1541ae59ef4c5f14496432de05b7dfd7e8094cd1b99b7e53be6a1` |
-| `msal-browser-4.30.0.esm.js` | `https://cdn.jsdelivr.net/npm/@azure/msal-browser@4.30.0/+esm` | 2026-08-18 | `03192d6944de96b001a7a9a7a636f1065fbeb9664dc5881d5ba5da9a0743d649b1182d806eb0c9c142a37f5488a115581f9e7c083198630044dc7a89ccefc150` |
-| `msal-common-15.17.0.esm.js` | `https://cdn.jsdelivr.net/npm/@azure/msal-common@15.17.0/browser/+esm` | 2026-08-18 | `fcdfe416216694362e6cecb74c2e5109e0dd0dd509618c5253e4c323729a7d4074fec422265b1123bd8ab24bcdcd99fc096ddb218ab6c2f64176ed961b08601a` |
+| `pizzip-3.2.0.esm.js` | `https://cdn.jsdelivr.net/npm/pizzip@3.2.0/+esm` | 2026-08-18 (trailing `sourceMappingURL` comment stripped 2026-08-19, see below) | `7ef8925d62323ef72b7cadf547268e846fe2e08caf8fbc495736c6cf3f680c66401431052f7e39bfb746701845e6bf5172be59094af3c4225a995933529b1fa5` |
+| `docx-8.5.0.esm.js` | `https://cdn.jsdelivr.net/npm/docx@8.5.0/+esm` | 2026-08-18 (trailing `sourceMappingURL` comment stripped 2026-08-19, see below) | `0cb09c29cca3a734e66d3bd96d00007731703703bb202d56fcf04ef1b3cb529aeed111096f0364e62f0e28e244831604c1289006e92de40847d6789471c87a0b` |
+| `pako-2.1.0.esm.js` | `https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.es5.min.js/+esm` | 2026-08-18 (trailing `sourceMappingURL` comment stripped 2026-08-19, see below) | `88ff160f549dc2ba7405f9a9a0d18e7c780fd4d3ca25a9b053127da3036801f2f308d489144e2d73594c13a3403aa9d14a5ef121b525e4c4ee91e7b348c03b64` |
+| `msal-browser-4.30.0.esm.js` | `https://cdn.jsdelivr.net/npm/@azure/msal-browser@4.30.0/+esm` | 2026-08-18 (patched 2026-08-19 — dynamic-import fix + `sourceMappingURL` comment stripped; patched again 2026-08-20 — `@vite-ignore` added, see below) | `4b03477903ae9026811849f8afe97bed91990c0f9fa05338d4e8315fb387428467d11e68effa27384a2c65a236fc73801c5dce072444f5d79923726dbfd87bc4` |
+| `msal-common-15.17.0.esm.js` | `https://cdn.jsdelivr.net/npm/@azure/msal-common@15.17.0/browser/+esm` | 2026-08-18 (trailing `sourceMappingURL` comment stripped 2026-08-19, see below) | `075a58f52bc99985c154b7a812ecdf1fd56e3b419dd8af6da664f38a5b3ee74a7d53e55b0fa4f53321d96dfb09e82aa16d3dd69d17e996a41fed8de8ff34db27` |
 
 `pako` is pizzip's only dependency (zlib compression); `pizzip-3.2.0.esm.js`
 imports it via the local relative path `./pako-2.1.0.esm.js`. `docx` has no
@@ -27,7 +27,58 @@ relative-import rewrite was applied so `msal-browser-4.30.0.esm.js` imports
 the version jsDelivr's package metadata tags `"lts"` for
 `@azure/msal-browser` (the newer `5.x` line is its current `"latest"`),
 picked here for production stability over bleeding-edge features. Neither
-file has any further `from"/npm/..."` imports (checked after the rewrite).
+file has any further `from"/npm/..."` **static** imports (checked after
+the rewrite) — but see the dynamic-import patch below, which that check
+did not catch.
+
+### Cleanup: stray `sourceMappingURL` comments stripped (2026-08-19)
+
+Every file in the table above originally ended with a `//# sourceMappingURL=/sm/<hash>.map` comment left over from jsDelivr's `+esm` bundler — pointing at a source map hosted on jsDelivr, not anything present in this repo. Under Vite's dev server this produced a harmless but noisy `ENOENT`-based warning on every startup (Vite tries to load the referenced map for its error-overlay/devtools support and fails since the file was never vendored). Since none of these maps are used by this app in any way, the comment line itself was simply deleted from all five files rather than vendoring five more never-referenced files. No functional code changed; only the SHA-512 values above (recomputed after the deletion).
+
+### Patch: dead dynamic `import()` disarmed for Vite compatibility (2026-08-19)
+
+Adopting Vite (see `package.json`, `AUTH.md`'s "NPM/Vite alternative")
+surfaced one thing the `from"..."` grep above doesn't check for: a
+**dynamic** `import("/npm/@azure/msal-browser@4.30.0/dist/telemetry/
+BrowserPerformanceMeasurement.mjs/+esm")` buried inside MSAL's own
+internal, undocumented performance-telemetry code path. It's gated behind
+a hardcoded `sessionStorage` key MSAL checks internally — not exposed via
+any public `msalConfig` option, and this app never sets that key — so this
+was already dead code for us before Vite existed; it just didn't visibly
+break anything under plain `<script type="module">` loading the way it
+does under Vite's bundler/dev-transform, which both try to statically
+resolve every `import()` call they see and fail hard on a live jsDelivr
+URL that isn't a real local module.
+
+Fixed by rewriting that one line's argument from a plain string literal to
+a string concatenation (`""+"...same string..."`) — this defeats Vite
+dev-server's literal-import-analysis pass, which is enough on its own for
+`npm run dev`. `npm run build`'s bundler (rolldown) constant-folds the
+concatenation back into a literal during its own optimization pass, so
+`vite.config.js` additionally lists that exact resolved string under
+`build.rollupOptions.external`, telling it to leave that one import
+unresolved rather than fail the build. Net behavior is unchanged either
+way — it's still exactly the same runtime-only dynamic import upstream
+MSAL shipped, which our CSP (`script-src 'self'`) would block if it were
+ever somehow reached, wrapped in MSAL's own `try/catch` so a blocked fetch
+fails silently.
+
+If re-vendoring a newer version, re-check for this same pattern (search for
+`import(` — not just `from"` — and specifically for any `/npm/` or other
+external-URL argument) and re-apply the same fix if it's still present.
+
+### Patch: `@vite-ignore` added to silence the dev-server warning (2026-08-20)
+
+The concatenation fix above stops Vite's dev-server transform from
+attempting (and failing) to resolve the import, but it still *warns* about
+it on every `npm run dev` startup ("The above dynamic import cannot be
+analyzed by Vite") — harmless, but noisy. Since this import is confirmed
+dead code for this app (see above) and deliberately left unresolvable on
+purpose, a `/* @vite-ignore */` comment was added directly before the
+`import(` call — this is Vite's own documented way to tell its
+import-analysis pass "yes, I know, leave this one alone," rather than
+something masking an unintended failure. No behavior change; the SHA-512
+above reflects the file after both patches.
 
 ## `tesseract/` — Tesseract.js's own runtime fetches
 
@@ -76,8 +127,11 @@ the CSP no longer allow-lists it at all.
 
 1. Fetch the new `+esm` bundle from jsDelivr for the target version.
 2. Check it for further `import ... from "/npm/..."` lines (grep for
-   `from"` ) — each one is another dependency that needs vendoring the same
-   way, with its import path rewritten to a local relative path.
+   `from"`) — each one is another dependency that needs vendoring the same
+   way, with its import path rewritten to a local relative path. **Also**
+   grep for `import(` (dynamic imports) — `from"` alone misses these, and
+   one shipped inside `msal-browser` pointing at a live jsDelivr URL; see
+   the "Patch" note above for how that one was handled.
 3. Record the new file's SHA-512 (`sha512sum <file>`) in the table above so
    future diffs are auditable.
 4. Update the version in the `import` path in `script.js`.
