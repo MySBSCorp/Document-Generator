@@ -1,0 +1,73 @@
+name: Deploy to S3 and CloudFront
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Build and deploy production
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static site
+        env:
+          VITE_MSAL_CLIENT_ID: ${{ vars.VITE_MSAL_CLIENT_ID }}
+          VITE_MSAL_TENANT_ID: ${{ vars.VITE_MSAL_TENANT_ID }}
+          VITE_MSAL_REDIRECT_URI: ${{ vars.VITE_MSAL_REDIRECT_URI }}
+        run: npm run build
+
+      - name: Verify required build files
+        run: |
+          test -f dist/index.html
+          test -f dist/assets/logo.jpg
+          test -f dist/assets/msa-template.docx
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload site to S3
+        run: >-
+          aws s3 sync dist/ "s3://${{ vars.S3_BUCKET }}/"
+          --delete
+          --cache-control "public,max-age=300,must-revalidate"
+
+      - name: Prevent caching of the application entry point
+        run: >-
+          aws s3 cp dist/index.html "s3://${{ vars.S3_BUCKET }}/index.html"
+          --content-type "text/html; charset=utf-8"
+          --cache-control "no-cache,no-store,must-revalidate"
+          --metadata-directive REPLACE
+
+      - name: Invalidate CloudFront cache
+        run: >-
+          aws cloudfront create-invalidation
+          --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}"
+          --paths "/*"
