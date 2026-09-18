@@ -119,7 +119,9 @@ Do not upload the repository root as the website. Only the generated `dist/` dir
 
 ### 3. Configure the Amplify build
 
-On the build-settings page, use:
+The repository includes `amplify.yml` at its root with the required build configuration. A Git-connected Amplify app detects this file automatically, and it takes precedence over build settings entered in the Amplify console.
+
+The committed configuration is:
 
 ```yaml
 version: 1
@@ -376,4 +378,3 @@ Do not delete the old EC2 deployment until Amplify, DNS, authentication, uploads
 - **Old content appears**: verify the latest Amplify job succeeded, then hard-refresh or test in an incognito window.
 - **Missing logo/template/PDF worker**: inspect the successful build artifacts and confirm the expected files exist under `dist/assets/`.
 - **Temporary Amplify URL works but custom domain returns 404**: confirm `w9.mysbscorp.com` is mapped to the `main` branch in Amplify and the GoDaddy CNAME target matches Amplify exactly.
-
